@@ -12,7 +12,7 @@ import { GRADIENTS, u } from '../hud/style'
 import Panel from './Panel'
 
 const CARD_GRADIENTS = {
-  health: 'linear-gradient(180deg, #8ff0ff 0%, #2fb8ff 50%, #1677ff 100%)',
+  water: 'linear-gradient(180deg, #8ff0ff 0%, #2fb8ff 50%, #1677ff 100%)',
   after: 'linear-gradient(180deg, #c6ff7a 0%, #6fe04a 50%, #26ad3c 100%)',
   level: 'linear-gradient(180deg, #ffe25a 0%, #ffb21e 55%, #f08a0a 100%)',
 }
@@ -40,7 +40,7 @@ function StatCard({ kind, text }) {
 
 /**
  * Rebirth, as in the reference: what you have now against what the next rebirth gives
- * (Health multiplier and max level), your progress to max level, and the Rebirth button
+ * (Water multiplier and max level), your progress to max level, and the Rebirth button
  * once you're there - or Skip, for Wins, before then.
  */
 export function RebirthPanel() {
@@ -73,9 +73,9 @@ export function RebirthPanel() {
           <StrokeText stroke={u(11)}>After Rebirth</StrokeText>
         </div>
 
-        <StatCard kind="health" text={`${formatMultiplier(rebirthMultiplier(rebirths))} Health`} />
+        <StatCard kind="water" text={`${formatMultiplier(rebirthMultiplier(rebirths))} Water`} />
         <Icon name="fastForward" size={u(80)} />
-        <StatCard kind="after" text={`${formatMultiplier(rebirthMultiplier(rebirths + 1))} Health`} />
+        <StatCard kind="after" text={`${formatMultiplier(rebirthMultiplier(rebirths + 1))} Water`} />
 
         <StatCard kind="level" text={`Max Level ${cap}`} />
         <Icon name="fastForward" size={u(80)} />
@@ -84,8 +84,11 @@ export function RebirthPanel() {
 
       <p className="m-0 text-center" style={{ fontSize: u(46), marginTop: u(18) }}>
         <StrokeText stroke={u(9)} gradient={PURPLE}>
-          Rebirth resets your Level and Health!
+          Rebirth resets your Level and Water!
         </StrokeText>
+      </p>
+      <p className="m-0 text-center" style={{ fontSize: u(30), marginTop: u(4) }}>
+        <StrokeText stroke={u(6)}>Pits you skipped need filling again - Wins, buckets and pets stay.</StrokeText>
       </p>
       {gift && (
         <p className="m-0 flex items-center justify-center" style={{ fontSize: u(40), marginTop: u(8), gap: u(10) }}>

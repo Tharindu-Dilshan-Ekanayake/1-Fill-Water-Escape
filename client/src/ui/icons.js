@@ -155,25 +155,32 @@ const heart = svg(
   ]),
 )
 
-/** A chunky tire seen side on: knobbly black tread round a blue rim with a gold hub. */
-const tireKnobs = Array.from({ length: 16 }, (_, i) => {
-  const a = (i / 16) * Math.PI * 2
-  const x = 50 + Math.cos(a) * 41
-  const y = 50 + Math.sin(a) * 41
-  return `<rect x="${(x - 6).toFixed(1)}" y="${(y - 5).toFixed(1)}" width="12" height="10" rx="2" transform="rotate(${((a * 180) / Math.PI).toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)})"/>`
-}).join('')
-const tire = svg(
-  `<g fill="#26282e" stroke="${OUT}" stroke-width="4">${tireKnobs}</g>
-  <circle cx="50" cy="50" r="38" fill="#2b2e35" stroke="${OUT}" stroke-width="6"/>
-  <circle cx="50" cy="50" r="23" fill="url(#ti-g)" stroke="${OUT}" stroke-width="5"/>
-  <g stroke="#fff" stroke-width="4.5" stroke-linecap="round">
-    <path d="M50 31v13M50 56v13M31 50h13M56 50h13M37 37l8 8M55 55l8 8M63 37l-8 8M45 55l-8 8"/>
-  </g>
-  <circle cx="50" cy="50" r="7" fill="#ffd23a" stroke="${OUT}" stroke-width="4"/>
-  <path d="M24 34c4-8 11-13 19-15" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".5"/>`,
-  vgrad('ti-g', [
-    [0, '#8fe0ff'],
-    [1, '#1f7fe6'],
+/** A water drop, as the Water Power icon: glossy blue with a white shine and a dark outline. */
+const DROP_PATH = 'M50 6C44 20 18 46 18 64c0 18 14 30 32 30s32-12 32-30C82 46 56 20 50 6z'
+const drop = svg(
+  `<path d="${DROP_PATH}" fill="url(#dr-g)" stroke="${OUT}" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M33 60c0-9 6-19 12-26" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" opacity=".85"/>
+  <circle cx="33" cy="72" r="4" fill="#fff" opacity=".85"/>`,
+  vgrad('dr-g', [
+    [0, '#9ff0ff'],
+    [0.45, '#2fb6ff'],
+    [1, '#0b62d6'],
+  ]),
+)
+
+/** A cartoon bucket side on: tapered blue pail with two bands, a wire handle and water at the brim. */
+const bucket = svg(
+  `<path d="M22 34C22 10 78 10 78 34" fill="none" stroke="${OUT}" stroke-width="10" stroke-linecap="round"/>
+  <path d="M22 34C22 10 78 10 78 34" fill="none" stroke="#d9e2ec" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M14 34h72l-9 56H23z" fill="url(#bk-g)" stroke="${OUT}" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M17 52h66M20 72h60" stroke="${OUT}" stroke-width="5"/>
+  <path d="M18 52h64M21 72h58" stroke="#ffd23a" stroke-width="2.5"/>
+  <ellipse cx="50" cy="36" rx="34" ry="7" fill="#5fd6ff" stroke="${OUT}" stroke-width="5"/>
+  <path d="M30 35c6-2 14-2 20 0" fill="none" stroke="#fff" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M25 46l3 34" stroke="#fff" stroke-width="4.5" stroke-linecap="round" opacity=".55"/>`,
+  vgrad('bk-g', [
+    [0, '#7fd0ff'],
+    [1, '#1f6fe0'],
   ]),
 )
 
@@ -194,16 +201,16 @@ function potion(id, liquid, liquidDark, badge) {
 
 const potionWins = potion(
   'pw',
-  '#4fd2ff',
-  '#1565e0',
+  '#ffe66a',
+  '#f09a00',
   `<path d="M38 62h24v6c0 7-5 12-12 12s-12-5-12-12z" fill="#ffd23a" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>
    <rect x="42" y="80" width="16" height="6" rx="2" fill="#ffd23a" stroke="${OUT}" stroke-width="3"/>`,
 )
-const potionHealth = potion(
-  'ph',
-  '#ff8aa4',
-  '#d4142a',
-  `<path d="M50 84c-3-3-14-10-15-18-1-5 3-9 7-9 3 0 6 2 8 5 2-3 5-5 8-5 4 0 8 4 7 9-1 8-12 15-15 18z" fill="#ffffff" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>`,
+const potionWater = potion(
+  'pa',
+  '#7ff4ff',
+  '#0b8fd6',
+  `<path d="M50 58c-3 6-11 13-11 19 0 6 5 10 11 10s11-4 11-10c0-6-8-13-11-19z" fill="#ffffff" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>`,
 )
 
 /** A spotted egg in the given colours. */
@@ -290,9 +297,10 @@ export const ICON_SVGS = {
   star,
   settings,
   heart,
-  tire,
+  drop,
+  bucket,
   potionWins,
-  potionHealth,
+  potionWater,
   close,
   arrowDown,
   check,

@@ -16,8 +16,9 @@ import Pets, { RewardCrab, SphinxShowcase } from './pets/Pets'
 import RemoteAvatars from './remote/RemoteAvatars'
 import RemotePlayers from './remote/RemotePlayers'
 import Particles from './fx/Particles'
+import Trail from './fx/Trail'
 import Leaderboards from './world/Leaderboards'
-import TireShop from './world/TireShop'
+import BucketShop from './world/BucketShop'
 import EggDisplays from './world/EggDisplays'
 import Portal from './world/Portal'
 import TutorialArrows from './world/TutorialArrows'
@@ -25,6 +26,7 @@ import Lighting from './Lighting'
 import PerfProbe from './PerfProbe'
 import Player from './Player'
 import ShaderWarmup from './ShaderWarmup'
+import TapToScoop from './TapToScoop'
 import { FOG, SKY } from './sceneStyle'
 import Sky from './Sky'
 import World from './world/World'
@@ -37,9 +39,9 @@ const DevPerf = import.meta.env.DEV
   : null
 const showDevPerf = import.meta.env.DEV && new URLSearchParams(window.location.search).has('perf')
 
-// The track is its own chunk, fetched once the lobby is on screen so it never delays
-// time-to-playable.
-const Roll = lazy(() => import('./roll/Roll'))
+// The escape course is its own chunk, fetched once the lobby is on screen so it never
+// delays time-to-playable.
+const Course = lazy(() => import('./course/Course'))
 
 /**
  * Fires `onFirstFrame` after the renderer has actually drawn once.
@@ -58,8 +60,8 @@ function FirstFrameSignal({ onFirstFrame }) {
 }
 
 /**
- * The world you're in: its lobby sky (and fog) now, and a track rebuilt with its stages
- * (Roll is keyed on it).
+ * The world you're in: its lobby sky (and fog) now, and a course rebuilt with its stages
+ * (Course is keyed on it, and on the x2 Wins pass).
  */
 function WorldSky({ world }) {
   const scene = useThree((s) => s.scene)
@@ -97,6 +99,8 @@ export function GameScene({ onReady }) {
   // Boxity ad break: nothing renders until it's over.
   const adBreak = useBloxityStore((s) => s.adBreak)
   const world = useGame((s) => s.profile.world)
+  // The course's Wins pads show what they pay you, so the x2 Wins pass rebuilds it.
+  const winsX2 = useGame((s) => Boolean(s.profile.passes.winsX2))
 
   const [warmedUp, setWarmedUp] = useState(false)
   const [firstFrame, setFirstFrame] = useState(false)
@@ -206,12 +210,13 @@ export function GameScene({ onReady }) {
         <Lighting />
         <World />
         <WorldLabels />
-        <TireShop />
+        <BucketShop />
         <EggDisplays />
         <Portal />
         <Leaderboards />
         <TutorialArrows />
         <Particles />
+        <Trail />
         <SphinxShowcase />
         <RewardCrab />
         <Pets />
@@ -222,11 +227,12 @@ export function GameScene({ onReady }) {
         <GainFX />
         {warmedUp && firstFrame && (
           <Suspense fallback={null}>
-            <Roll key={world} />
+            <Course key={`${world}-${winsX2}`} />
           </Suspense>
         )}
 
         <FollowCamera />
+        <TapToScoop />
         <ShaderWarmup onDone={handleWarmedUp} />
         {warmedUp && <FirstFrameSignal onFirstFrame={handleFirstFrame} />}
         <PerfProbe />

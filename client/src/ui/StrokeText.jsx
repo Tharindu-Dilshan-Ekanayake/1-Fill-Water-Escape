@@ -7,17 +7,18 @@
  * the same glyph area, and the stroke eats half of every letter.
  *
  * @param {{ children: React.ReactNode, stroke?: number|string, fill?: string,
- *           gradient?: string, className?: string, style?: object }} props
+ *           gradient?: string, className?: string, style?: object, ref?: object }} props
  *   `stroke` is the outline width (CSS length or px number). `gradient` is any CSS
- *   gradient and wins over `fill`.
+ *   gradient and wins over `fill`. `ref` gets the root, for text written into both
+ *   copies straight from outside React.
  */
-export function StrokeText({ children, stroke = 6, fill = '#ffffff', gradient, className = '', style }) {
+export function StrokeText({ children, stroke = 6, fill = '#ffffff', gradient, className = '', style, ref }) {
   const width = typeof stroke === 'number' ? `${stroke}px` : stroke
   const fillStyle = gradient
     ? { backgroundImage: gradient, WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }
     : { color: fill }
   return (
-    <span className={`pp-text ${className}`} style={style}>
+    <span ref={ref} className={`pp-text ${className}`} style={style}>
       <span aria-hidden="true" className="pp-text-stroke" style={{ WebkitTextStrokeWidth: width }}>
         {children}
       </span>

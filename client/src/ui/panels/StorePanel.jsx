@@ -1,11 +1,13 @@
 import { useState } from 'react'
 
-import { AD_REWARDS, GEM_PRODUCTS, PETS, SHOP } from '@shared/balance'
+import { AD_REWARDS, COSMETICS, GEM_PRODUCTS, PETS, SHOP, WELLS } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 
 import { buyGems, isRewardedAvailable, useGemsBalance, watchRewardedAd } from '../../bloxity/services'
+import { actions } from '../../net/actions'
 import { buy } from '../../net/shop'
 import { useGame } from '../../store/game'
+import { useQuality } from '../../store/quality'
 import Icon from '../Icon'
 import PetIcon from '../PetIcon'
 import RewardIcon from '../RewardIcon'
@@ -15,26 +17,29 @@ import { GRADIENTS, u } from '../hud/style'
 import Panel from './Panel'
 
 const SECTIONS = [
-  { title: 'Passes', items: ['healthX2', 'winsX2', 'autoRoll'] },
-  { title: 'Training Pads', items: ['padVeryOp', 'padBest'] },
+  { title: 'Passes', items: ['waterX2', 'winsX2', 'autoWin'] },
+  { title: 'Training Wells', items: ['wellVeryOp', 'wellBest'] },
   { title: 'Specials', items: ['sphinx'] },
 ]
 
 const ICONS = {
-  healthX2: 'heart',
+  waterX2: 'drop',
   winsX2: 'trophy',
-  autoRoll: 'tire',
-  padVeryOp: 'portal',
-  padBest: 'portal',
+  autoWin: 'bucket',
+  wellVeryOp: 'portal',
+  wellBest: 'portal',
 }
 
+/** The well a pass unlocks, for its blurb. */
+const wellFor = (product) => WELLS.find((well) => well.product === product)
+
 const BLURBS = {
-  healthX2: 'Double every Health gain, forever',
-  winsX2: 'Double the Wins from every roll, forever',
-  autoRoll: 'Rolls your tire for you on the Roll Zone',
-  padVeryOp: 'Unlocks the x40 Diamond Pad',
-  padBest: 'Unlocks the x100 Galaxy Pad',
-  sphinx: `Limited: x${formatNumber(PETS.sphinx.mult)} Health pet`,
+  waterX2: 'Double every Water gain, forever',
+  winsX2: 'Double every Wins pad, forever',
+  autoWin: 'Claims your best ledge’s Wins while you stand on the start line',
+  wellVeryOp: `Unlocks the x${wellFor('wellVeryOp').mult} ${wellFor('wellVeryOp').name}`,
+  wellBest: `Unlocks the x${wellFor('wellBest').mult} ${wellFor('wellBest').name}`,
+  sphinx: `Limited: x${formatNumber(PETS.sphinx.mult)} Water pet`,
 }
 
 const BLURB_STYLE = { color: '#3a2a10', fontFamily: 'system-ui, sans-serif', fontWeight: 700 }
@@ -122,6 +127,63 @@ function GemsSection() {
   )
 }
 
+/** A trail's colours, for its swatch. */
+const TRAIL_SWATCHES = {
+  none: 'linear-gradient(135deg, #8a929c, #5b626b)',
+  bubbles: 'radial-gradient(circle at 35% 35%, #ffffff 0 18%, #7fe2ff 19% 55%, #2fa8ff 56%)',
+  sparkle: 'radial-gradient(circle at 35% 35%, #ffffff 0 15%, #ffe45c 16% 55%, #ff9a12 56%)',
+  confetti: GRADIENTS.rainbow,
+  stardust: 'radial-gradient(circle at 35% 35%, #ffffff 0 12%, #ff7ad6 13% 40%, #6a5cff 41%)',
+  fire: 'radial-gradient(circle at 50% 70%, #ffd21f 0 25%, #ff6a1e 26% 60%, #d4142a 61%)',
+}
+
+/** A cosmetic's swatch: the colour it pours, or its trail's sparkles. */
+function Swatch({ kind, id, look }) {
+  const background = kind === 'trail' ? TRAIL_SWATCHES[id] : look.color === 'rainbow' ? GRADIENTS.rainbow : look.color
+  return <span className="block rounded-full" style={{ width: u(84), height: u(84), margin: u(6), border: `${u(5)} solid #111`, background }} />
+}
+
+/**
+ * Cosmetics: the colour of the Water you pour and a trail behind you - bought once with
+ * Wins, shown or swapped any time. Looks only.
+ */
+function CosmeticsSection({ kind, title, blurb }) {
+  const looks = useGame((s) => s.profile.cosmetics)
+  const wins = useGame((s) => s.profile.wins)
+  const particles = useQuality((s) => s.settings.particles)
+  return (
+    <div>
+      <SectionTitle>{title}</SectionTitle>
+      <div className="grid" style={GRID}>
+        {Object.entries(COSMETICS[kind]).map(([id, look]) => {
+          const owned = looks.owned.includes(id)
+          const shown = looks[kind] === id
+          const note = kind === 'trail' && id !== 'none' && !particles ? `${blurb} (needs Medium graphics)` : blurb
+          return (
+            <Card key={id} icon={<Swatch kind={kind} id={id} look={look} />} name={look.name} blurb={note} faded={shown}>
+              <ChunkyButton
+                gradient={shown ? GRADIENTS.greyButton : owned ? GRADIENTS.blueButton : GRADIENTS.greenButton}
+                disabled={shown}
+                onClick={() => actions.cosmetic(kind, id)}
+                className="w-full"
+                style={{ height: u(58) }}
+              >
+                {shown || owned ? (
+                  <span style={{ fontSize: u(30) }}>
+                    <StrokeText stroke={u(6)}>{shown ? 'Showing' : 'Show'}</StrokeText>
+                  </span>
+                ) : (
+                  <Price amount={look.price} size={32} afford={wins >= look.price} />
+                )}
+              </ChunkyButton>
+            </Card>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 /** Free potions for watching an ad (Boxity rewarded ads), when Boxity has one to show. */
 function FreeSection() {
   const [state, setState] = useState({})
@@ -158,7 +220,7 @@ function FreeSection() {
   )
 }
 
-/** Everything Wins can buy besides tires, eggs and Health packs, grouped, plus Gems and free rewards. */
+/** Everything Wins can buy besides buckets, eggs and Water packs, grouped - passes, wells, cosmetics - plus Gems and free rewards. */
 export function StorePanel() {
   const passes = useGame((s) => s.profile.passes)
   const wins = useGame((s) => s.profile.wins)
@@ -197,6 +259,8 @@ export function StorePanel() {
             </div>
           </div>
         ))}
+        <CosmeticsSection kind="stream" title="Pour Colours" blurb="The colour of the Water you pour" />
+        <CosmeticsSection kind="trail" title="Trails" blurb="Sparkles behind you as you move" />
         <GemsSection />
       </div>
     </Panel>

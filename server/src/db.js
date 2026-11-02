@@ -3,7 +3,7 @@ import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { SPHINX_STOCK_DEFAULT } from '../../shared/balance.js'
-import { normalizeProfile } from '../../shared/logic.js'
+import { normalizeProfile, overallStage, weekOf } from '../../shared/logic.js'
 
 /**
  * Persistence, behind one small async API with two backends:
@@ -29,16 +29,21 @@ import { normalizeProfile } from '../../shared/logic.js'
  *   before it is applied, so it lands exactly once however many pods look at it.
  */
 
-const DB_PATH = process.env.DB_PATH || fileURLToPath(new URL('../data/tire.db', import.meta.url))
+const DB_PATH = process.env.DB_PATH || fileURLToPath(new URL('../data/water.db', import.meta.url))
 
-const BOARDS = { rebirths: 'rebirths', wins: 'totalWins', distance: 'bestDistance', playtime: 'playtime' }
+const BOARDS = { rebirths: 'rebirths', wins: 'totalWins', stage: 'bestStage', playtime: 'playtime' }
 
 const leaderboardFields = (profile) => ({
   name: profile.name,
   rebirths: profile.rebirths,
   totalWins: profile.stats.totalWins,
   playtime: profile.stats.playtime,
-  bestDistance: profile.stats.bestDistance,
+  bestStage: overallStage(profile.stats),
+  // The weekly board: this week's Wins and the week before's (for its rewards).
+  week: profile.weekly.week,
+  weekWins: profile.weekly.wins,
+  prevWeek: profile.weekly.prev.week,
+  prevWeekWins: profile.weekly.prev.wins,
   updatedAt: profile.lastSeen,
 })
 
@@ -66,6 +71,8 @@ async function openMongo(uri) {
   const gems = db.collection('gem_grants')
   await Promise.all([
     ...Object.values(BOARDS).map((field) => profiles.createIndex({ [field]: -1 })),
+    profiles.createIndex({ week: 1, weekWins: -1 }),
+    profiles.createIndex({ prevWeek: 1, prevWeekWins: -1 }),
     gems.createIndex({ userId: 1, applied: 1 }),
     kv.updateOne({ _id: 'sphinxStock' }, { $setOnInsert: { value: SPHINX_STOCK_DEFAULT } }, { upsert: true }),
   ])
@@ -100,7 +107,23 @@ async function openMongo(uri) {
           .toArray()
         out[board] = docs.map((d) => ({ name: d.name, value: d[field] ?? 0 }))
       }
+      const weekly = await profiles
+        .find({ carriedTo: null, week: weekOf(Date.now()), weekWins: { $gt: 0 } }, { projection: { name: 1, weekWins: 1 } })
+        .sort({ weekWins: -1 })
+        .limit(limit)
+        .toArray()
+      out.weekly = weekly.map((d) => ({ name: d.name, value: d.weekWins ?? 0 }))
       return out
+    },
+    async weeklyRank(week, wins) {
+      const ahead = await profiles.countDocuments({
+        carriedTo: null,
+        $or: [
+          { week, weekWins: { $gt: wins } },
+          { prevWeek: week, prevWeekWins: { $gt: wins } },
+        ],
+      })
+      return ahead + 1
     },
     async carry(accountId, guestId, name) {
       if (await profiles.findOne({ _id: accountId }, { projection: { _id: 1 } })) return false
@@ -171,13 +194,13 @@ async function openSqlite(path) {
       rebirths INTEGER NOT NULL DEFAULT 0,
       total_wins REAL NOT NULL DEFAULT 0,
       playtime REAL NOT NULL DEFAULT 0,
-      best_distance REAL NOT NULL DEFAULT 0,
+      best_stage INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS profiles_rebirths ON profiles (rebirths DESC);
     CREATE INDEX IF NOT EXISTS profiles_wins ON profiles (total_wins DESC);
     CREATE INDEX IF NOT EXISTS profiles_playtime ON profiles (playtime DESC);
-    CREATE INDEX IF NOT EXISTS profiles_distance ON profiles (best_distance DESC);
+    CREATE INDEX IF NOT EXISTS profiles_stage ON profiles (best_stage DESC);
     CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS gem_grants (
       txn TEXT PRIMARY KEY,
@@ -191,11 +214,20 @@ async function openSqlite(path) {
     );
     CREATE INDEX IF NOT EXISTS gem_grants_user ON gem_grants (user_id, applied);
   `)
-  // Files from before guest carry-over lack the column.
-  if (!db.prepare('PRAGMA table_info(profiles)').all().some((c) => c.name === 'carried_to')) {
-    db.exec('ALTER TABLE profiles ADD COLUMN carried_to TEXT')
+  // Files from before guest carry-over, and the weekly board, lack their columns.
+  const has = new Set(db.prepare('PRAGMA table_info(profiles)').all().map((c) => c.name))
+  if (!has.has('carried_to')) db.exec('ALTER TABLE profiles ADD COLUMN carried_to TEXT')
+  for (const [column, type] of [
+    ['week', 'INTEGER'],
+    ['week_wins', 'REAL'],
+    ['prev_week', 'INTEGER'],
+    ['prev_week_wins', 'REAL'],
+  ]) {
+    if (!has.has(column)) db.exec(`ALTER TABLE profiles ADD COLUMN ${column} ${type} NOT NULL DEFAULT 0`)
   }
-  const columns = { rebirths: 'rebirths', wins: 'total_wins', distance: 'best_distance', playtime: 'playtime' }
+  db.exec('CREATE INDEX IF NOT EXISTS profiles_week ON profiles (week, week_wins DESC)')
+  db.exec('CREATE INDEX IF NOT EXISTS profiles_prev_week ON profiles (prev_week, prev_week_wins DESC)')
+  const columns = { rebirths: 'rebirths', wins: 'total_wins', stage: 'best_stage', playtime: 'playtime' }
   const readStock = () => {
     const row = db.prepare("SELECT value FROM kv WHERE key = 'sphinxStock'").get()
     return row ? Number(row.value) : SPHINX_STOCK_DEFAULT
@@ -209,13 +241,27 @@ async function openSqlite(path) {
     async save(profile) {
       const f = leaderboardFields(profile)
       db.prepare(
-        `INSERT INTO profiles (id, name, data, rebirths, total_wins, playtime, best_distance, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO profiles (id, name, data, rebirths, total_wins, playtime, best_stage, week, week_wins, prev_week, prev_week_wins, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name, data = excluded.data, rebirths = excluded.rebirths,
            total_wins = excluded.total_wins, playtime = excluded.playtime,
-           best_distance = excluded.best_distance, updated_at = excluded.updated_at`,
-      ).run(profile.id, f.name, JSON.stringify(profile), f.rebirths, f.totalWins, f.playtime, f.bestDistance, f.updatedAt)
+           best_stage = excluded.best_stage, week = excluded.week, week_wins = excluded.week_wins,
+           prev_week = excluded.prev_week, prev_week_wins = excluded.prev_week_wins, updated_at = excluded.updated_at`,
+      ).run(
+        profile.id,
+        f.name,
+        JSON.stringify(profile),
+        f.rebirths,
+        f.totalWins,
+        f.playtime,
+        f.bestStage,
+        f.week,
+        f.weekWins,
+        f.prevWeek,
+        f.prevWeekWins,
+        f.updatedAt,
+      )
       return true
     },
     async top(limit) {
@@ -226,7 +272,20 @@ async function openSqlite(path) {
           .all(limit)
           .map((r) => ({ name: r.name, value: r.value }))
       }
+      out.weekly = db
+        .prepare('SELECT name, week_wins AS value FROM profiles WHERE carried_to IS NULL AND week = ? AND week_wins > 0 ORDER BY week_wins DESC LIMIT ?')
+        .all(weekOf(Date.now()), limit)
+        .map((r) => ({ name: r.name, value: r.value }))
       return out
+    },
+    async weeklyRank(week, wins) {
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS ahead FROM profiles WHERE carried_to IS NULL AND
+             ((week = ? AND week_wins > ?) OR (prev_week = ? AND prev_week_wins > ?))`,
+        )
+        .get(week, wins, week, wins)
+      return Number(row.ahead) + 1
     },
     async carry(accountId, guestId, name) {
       if (db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(accountId)) return false
@@ -237,9 +296,9 @@ async function openSqlite(path) {
       // Synchronous, so nothing can come between the checks above and these two writes.
       db.prepare('UPDATE profiles SET carried_to = ? WHERE id = ?').run(accountId, guestId)
       db.prepare(
-        `INSERT INTO profiles (id, name, data, rebirths, total_wins, playtime, best_distance, updated_at)
+        `INSERT INTO profiles (id, name, data, rebirths, total_wins, playtime, best_stage, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(accountId, f.name, JSON.stringify(profile), f.rebirths, f.totalWins, f.playtime, f.bestDistance, f.updatedAt)
+      ).run(accountId, f.name, JSON.stringify(profile), f.rebirths, f.totalWins, f.playtime, f.bestStage, f.updatedAt)
       return true
     },
     async recordGem(grant) {
@@ -370,8 +429,11 @@ export const claimGemGrant = (transactionId, by) => store.claimGem(transactionId
 /** Gives back a claim whose player left before the grant could be applied. */
 export const releaseGemGrant = (transactionId, by) => store.releaseGem(transactionId, by)
 
-/** Top `limit` players per board: `{ rebirths: [{ name, value }], ... }`. */
+/** Top `limit` players per board: `{ rebirths: [{ name, value }], ..., weekly }`. */
 export const topPlayers = (limit = 10) => store.top(limit)
+
+/** Where `wins` would have ranked on week `week`'s board (1 = top). */
+export const weeklyRank = (week, wins) => store.weeklyRank(week, wins)
 
 export const getSphinxStock = () => stock
 

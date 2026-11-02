@@ -22,7 +22,7 @@ const roundButton = (size, background) => ({
 /**
  * On-screen controls for touch devices: a floating joystick that appears wherever the
  * left side of the screen is touched, and a jump button. Everything else is walking
- * onto things: the roll zone, a training pad, a tire stand.
+ * onto things: a training well, a Wins pad, a bucket stand.
  *
  * Writes straight into `runtime.input` and moves the knob through refs, so dragging
  * never re-renders React.
@@ -110,7 +110,7 @@ export function TouchControls() {
         <div
           ref={baseRef}
           // Resting low in the corner, clear of the menu tiles above it (and, held
-          // upright, of the Health bar below it): .touch-joy-rest in index.css.
+          // upright, of the Water bar below it): .touch-joy-rest in index.css.
           className="touch-joy-rest pointer-events-none absolute rounded-full border-4 border-white/70 bg-black/25"
           style={{
             width: RADIUS * 2,

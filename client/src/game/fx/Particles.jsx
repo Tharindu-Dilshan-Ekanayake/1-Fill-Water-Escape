@@ -31,8 +31,11 @@ const PALETTES = {
   confetti: ['#ff3b5c', '#ffd21f', '#4ef05a', '#2fc6ff', '#b15cff', '#ffffff'].map((c) => new Color(c)),
   gold: ['#ffe45c', '#ffc21f', '#ff9a12', '#ffffff'].map((c) => new Color(c)),
   power: ['#ffd84a', '#ffa21c', '#ffffff'].map((c) => new Color(c)),
-  /** Splinters and sawdust from a smashed wooden wall. */
-  wood: ['#c98f52', '#a8743f', '#e8c48a', '#8a5a32', '#fff3d6'].map((c) => new Color(c)),
+  /** Splashes: droplets of water and foam. */
+  water: ['#7fe2ff', '#3fb8ff', '#d6f6ff', '#ffffff'].map((c) => new Color(c)),
+  /** Cosmetic trails (balance.TRAILS). */
+  galaxy: ['#a56bff', '#6a5cff', '#ff7ad6', '#ffffff'].map((c) => new Color(c)),
+  lava: ['#ff6a1e', '#ff9a12', '#ffd21f', '#d4142a'].map((c) => new Color(c)),
 }
 
 /**

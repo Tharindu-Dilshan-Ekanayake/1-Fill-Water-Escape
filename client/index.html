@@ -5,11 +5,13 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#2f8ff2" />
-    <title>+1 Tire Rolling</title>
+    <title>+1 Fill Water Escape</title>
 
     <!-- Boxity SDK. Exposes itself as window.Legion.SDK. Deliberately NOT async/defer:
-         it must have run before the game's first matchmaker request, which it tags with
-         the player's Boxity party so friends land in the same room. It reads
+         Boxity's integration spec (and its reference game) loads it by script tag before
+         the game's own code - it must have run before the game's first matchmaker
+         request, which it tags with the player's Boxity party so friends land in the
+         same room, and before CrazyGames' "play with friends". It reads
          window.BLOXITY_ENV (set by the host page; in `vite dev`, injected above this tag)
          to pick its environment. -->
     <script src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script>

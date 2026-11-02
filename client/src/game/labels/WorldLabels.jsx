@@ -2,11 +2,13 @@ import { useThree } from '@react-three/fiber'
 import { useEffect, useState } from 'react'
 import { Group } from 'three'
 
+import { world2Open } from '@shared/logic'
+
 import { getGame, useGame } from '../../store/game'
 import { useQuality } from '../../store/quality'
 import { LabelBatch } from './LabelBatch'
-import { lobbyLabels } from './lobbyLabels'
-import { getActiveLabelBatch, setActiveLabelBatch } from './registry'
+import { lobbyLabels, portalLabelSpec } from './lobbyLabels'
+import { getActiveLabelBatch, setActiveLabelBatch, updateWorldLabel } from './registry'
 
 /**
  * All floating lobby text, batched (see LabelBatch). Builds asynchronously once the
@@ -17,6 +19,8 @@ export function WorldLabels() {
   const playable = useGame((s) => s.playable)
   // The portal's sign says where it goes, so the signs are rebuilt in a new world.
   const world = useGame((s) => s.profile.world)
+  // ...and rewritten when escaping World 1 opens World 2.
+  const open = useGame((s) => world2Open(s.profile))
   const gl = useThree((s) => s.gl)
   const camera = useThree((s) => s.camera)
   const scene = useThree((s) => s.scene)
@@ -59,6 +63,10 @@ export function WorldLabels() {
   useEffect(() => {
     batch?.setMaxDistance(maxDistance)
   }, [batch, maxDistance])
+
+  useEffect(() => {
+    updateWorldLabel('portal-world2', portalLabelSpec(getGame().profile))
+  }, [open])
 
   if (!batch) return null
   return batch.meshes.map((mesh) => <primitive key={mesh.uuid} object={mesh} />)

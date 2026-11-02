@@ -69,6 +69,22 @@ export function NameplateLayer() {
               element with a thick text-stroke draws stray bits of outline on phones. */}
           <span data-name="" className="pp-text-stroke" style={{ WebkitTextStrokeWidth: '0.24em', WebkitTextStrokeColor: '#121218', color: '#121218' }} />
           <span data-name="" className="pp-text-fill" style={{ color: '#ffffff' }} />
+          {/* Under the name, out of the flow like the bubble: rebirths and best stage. */}
+          <div
+            data-tag=""
+            style={{
+              display: 'none',
+              position: 'absolute',
+              left: '50%',
+              top: '100%',
+              transform: 'translateX(-50%)',
+              whiteSpace: 'nowrap',
+              fontSize: '0.62em',
+              color: '#ffd21f',
+              textShadow: '0 0.08em 0 #121218, 0.06em 0 0 #121218, -0.06em 0 0 #121218, 0 -0.06em 0 #121218',
+              letterSpacing: 0,
+            }}
+          />
         </div>
       ))}
       <div ref={localRef} style={{ ...BUBBLE_STYLE, position: 'absolute', left: 0, top: 0, willChange: 'transform' }} />

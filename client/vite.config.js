@@ -59,6 +59,27 @@ export default defineConfig({
     // ../shared lives outside the client root.
     fs: { allow: ['..'] },
   },
+  build: {
+    // three.js on its own is ~800 kB minified (~200 kB gzipped): the one chunk that can't be smaller.
+    chunkSizeWarningLimit: 850,
+    rolldownOptions: {
+      output: {
+        /**
+         * The libraries every page load needs, each in a chunk of its own: they download
+         * side by side with the game's code, and stay cached across game updates (only
+         * the game's own, much smaller, chunk changes). A group takes the modules its
+         * own depend on too, so the one others depend on (three.js) goes first.
+         */
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /node_modules[\/](react|react-dom|scheduler)[\/]/, priority: 2 },
+            { name: 'r3f', test: /node_modules[\/](@react-three|its-fine|suspend-react|react-use-measure|zustand|use-sync-external-store)[\/]/, priority: 1 },
+            { name: 'three', test: /node_modules[\/]three[\/]/, priority: 3 },
+          ],
+        },
+      },
+    },
+  },
   optimizeDeps: {
     // Dev-only perf overlay, imported lazily; pre-bundle it so the first ?perf load
     // doesn't hit a mid-session dependency re-optimisation.

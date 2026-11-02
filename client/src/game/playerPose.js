@@ -103,104 +103,102 @@ function airborne(vy) {
 }
 
 /**
- * Lying face down on the board, head first (the body itself is turned prone by its
- * holder; this is the pose within that): hands down gripping the rails, legs straight
- * out behind, chest and head lifted to see where you're going. Rattles a little at speed.
+ * Carrying the bucket in the right hand: the arm held a little out from the side with
+ * the elbow bent, so the bucket hangs clear of the legs, swinging less than a free arm.
  */
-function prone(time, speed, w = 1) {
-  const rattle = Math.min(1, speed / 80) * 0.05
-  const shake = Math.sin(time * 37) * rattle
-  add('Spine1', -0.16, 0, 0, w)
-  add('Neck1', -0.95, 0, 0, w)
-  add('ArmL1', -1.35 + shake, 0.42 * OUT_L, 0, w)
-  add('ArmL2', -0.7, 0, 0, w)
-  add('ArmR1', -1.35 - shake, 0.42 * OUT_R, 0, w)
-  add('ArmR2', -0.7, 0, 0, w)
-  add('LegL1', 0.08 + shake, 0.1 * OUT_L, 0, w)
-  add('LegL2', 0.12, 0, 0, w)
-  add('LegR1', 0.08 - shake, 0.1 * OUT_R, 0, w)
-  add('LegR2', 0.12, 0, 0, w)
+function carrying(w) {
+  add('ArmR1', -0.12, 0.2 * OUT_R, 0, w)
+  add('ArmR2', -0.55, 0, 0, w)
 }
 
 /**
- * The launch, `t` 0..1 (the holder moves and turns the body; this is the pose within):
- * crouch down with the arms swung back, spring into a dive with both arms stretched
- * out ahead, and settle into the riding grip as you land on the board.
+ * Scooping in a well, `phase` 0..1 through one scoop (one per TRAIN_INTERVAL): bend down
+ * with both arms reaching for the water, dip, and haul the full bucket back up.
  */
-function launching(t, time) {
-  const crouch = smooth(0, 0.3, t) * (1 - smooth(0.38, 0.52, t))
-  const dive = smooth(0.38, 0.55, t) * (1 - smooth(0.82, 1, t))
-  add('LegL1', -0.75, 0.08 * OUT_L, 0, crouch)
-  add('LegL2', 1.35, 0, 0, crouch)
-  add('LegR1', -0.75, 0.08 * OUT_R, 0, crouch)
-  add('LegR2', 1.35, 0, 0, crouch)
-  add('Spine1', -0.45, 0, 0, crouch)
-  add('Neck1', 0.25, 0, 0, crouch)
-  add('ArmL1', 0.95, 0.15 * OUT_L, 0, crouch)
-  add('ArmR1', 0.95, 0.15 * OUT_R, 0, crouch)
-  add('ArmL2', -0.35, 0, 0, crouch)
-  add('ArmR2', -0.35, 0, 0, crouch)
-  pose.lift -= 0.32 * crouch
+function scooping(phase, w) {
+  // Down quickly, a beat at the bottom, then up.
+  const dip = smooth(0, 0.3, phase) * (1 - smooth(0.55, 0.95, phase))
+  add('Spine1', -0.75 * dip, 0, 0, w)
+  add('Neck1', 0.25 * dip, 0, 0, w)
+  add('ArmR1', -0.95 * dip - 0.2, 0.08 * OUT_R, 0, w)
+  add('ArmR2', -0.25, 0, 0, w)
+  add('ArmL1', -1.05 * dip - 0.25, 0.25 * OUT_L, 0, w)
+  add('ArmL2', -0.35, 0, 0, w)
+  add('LegL1', -0.45 * dip, 0.06 * OUT_L, 0, w)
+  add('LegL2', 0.8 * dip, 0, 0, w)
+  add('LegR1', -0.45 * dip, 0.06 * OUT_R, 0, w)
+  add('LegR2', 0.8 * dip, 0, 0, w)
+  pose.lift -= 0.22 * dip * w
+}
 
-  add('ArmL1', -2.95, 0.12 * OUT_L, 0, dive)
-  add('ArmR1', -2.95, 0.12 * OUT_R, 0, dive)
-  add('LegL1', 0.18, 0.06 * OUT_L, 0, dive)
-  add('LegR1', 0.18, 0.06 * OUT_R, 0, dive)
-  add('Spine1', 0.12, 0, 0, dive)
-  add('Neck1', -0.5, 0, 0, dive)
-
-  prone(time, 0, smooth(0.8, 1, t))
+/** Pouring at a pit's rim: both arms up and out in front, tipping the bucket over. */
+function pouring(time, w) {
+  const shake = Math.sin(time * 14) * 0.04
+  add('ArmR1', -1.55 + shake, 0.1 * OUT_R, 0, w)
+  add('ArmR2', -0.35, 0, 0, w)
+  add('ArmL1', -1.7 - shake, 0.35 * OUT_L, 0, w)
+  add('ArmL2', -0.6, 0, 0, w)
+  add('Spine1', 0.08, 0, 0, w)
+  add('Neck1', 0.25, 0, 0, w)
+  add('LegL1', -0.2, 0.06 * OUT_L, 0, w)
+  add('LegR1', 0.15, 0.06 * OUT_R, 0, w)
 }
 
 /**
- * Where in the kick (0-1) the foot meets the tire: the tire sets off at that moment
- * (roll/path.js, KICK_HIT).
+ * Swimming. The holder lies the body down flat on the water as you get going (see
+ * `swimTilt`); this is the pose within that. Moving (`ratio` of top speed): a front
+ * crawl - one arm reaching forward over the water while the other pulls through under
+ * it, the body rolling with each stroke, legs flutter-kicking, head up to see ahead.
+ * Still: treading water, arms sculling out to the sides, legs cycling. `stroke` is the
+ * stroke cycle's phase (radians), advanced by the holder.
  */
-export const KICK_IMPACT = 0.52
+function swimming(time, stroke, ratio, w) {
+  const tread = 1 - ratio
+  const scull = Math.sin(time * 4)
+  add('ArmL1', -0.35 * tread, (1 + scull * 0.3) * OUT_L * tread, 0, w)
+  add('ArmR1', -0.35 * tread, (1 - scull * 0.3) * OUT_R * tread, 0, w)
+  add('ArmL2', -0.7 * tread, 0, 0, w)
+  add('ArmR2', -0.7 * tread, 0, 0, w)
+  add('LegL1', Math.sin(time * 3) * 0.35 * tread, 0.1 * OUT_L, 0, w)
+  add('LegR1', -Math.sin(time * 3) * 0.35 * tread, 0.1 * OUT_R, 0, w)
+  add('LegL2', (0.5 + 0.3 * Math.max(0, Math.sin(time * 3))) * tread, 0, 0, w)
+  add('LegR2', (0.5 + 0.3 * Math.max(0, -Math.sin(time * 3))) * tread, 0, 0, w)
 
-/**
- * Kicking the tire off, `t` 0..1: weight shifts onto the left leg, the right leg swings
- * back with the knee folded and the body leans away, then it whips forward and the
- * knee straightens as the foot meets the tire (at KICK_IMPACT), the body leaning into
- * it with the arms thrown out for balance, and the leg follows through before settling.
- */
-function kickPose(t, w) {
-  const wind = smooth(0, KICK_IMPACT - 0.1, t) * (1 - smooth(KICK_IMPACT - 0.1, KICK_IMPACT, t))
-  const strike = smooth(KICK_IMPACT - 0.1, KICK_IMPACT, t) * (1 - smooth(0.72, 1, t))
-  const plant = smooth(0, 0.3, t) * (1 - smooth(0.85, 1, t))
-  // The kicking leg: back and bent, then forward and straight.
-  add('LegR1', 0.95, 0.04 * OUT_R, 0, wind * w)
-  add('LegR2', 1.6, 0, 0, wind * w)
-  add('LegR1', -1.4, 0.04 * OUT_R, 0, strike * w)
-  add('LegR2', 0.15, 0, 0, strike * w)
-  // The planted leg bends a little to take the weight.
-  add('LegL1', -0.14, 0.05 * OUT_L, 0, plant * w)
-  add('LegL2', 0.34, 0, 0, plant * w)
-  // Body: back, then into it.
-  add('Spine1', 0.14, 0, 0, wind * w)
-  add('Spine1', -0.32, 0, -0.18, strike * w)
-  add('Neck1', -0.12, 0, 0, strike * w)
-  // Arms swing against the leg and fling out for balance.
-  add('ArmL1', 0.5, 0.3 * OUT_L, 0, wind * w)
-  add('ArmR1', -0.5, 0.3 * OUT_R, 0, wind * w)
-  add('ArmL1', -0.9, 0.45 * OUT_L, 0, strike * w)
-  add('ArmR1', 0.7, 0.45 * OUT_R, 0, strike * w)
-  add('ArmL2', -0.3, 0, 0, plant * w)
-  add('ArmR2', -0.3, 0, 0, plant * w)
-  pose.lift += (-0.04 * wind + 0.06 * strike) * w
+  // The crawl: each arm goes all the way round, half a turn behind the other - from
+  // reaching out ahead (-PI) it pulls down through the water to the hip (0), then
+  // recovers, elbow bent, up over the back to the front again.
+  const left = (stroke % (Math.PI * 2)) - Math.PI
+  const right = ((stroke + Math.PI) % (Math.PI * 2)) - Math.PI
+  add('ArmL1', left * ratio, 0.18 * OUT_L * ratio, 0, w)
+  add('ArmR1', right * ratio, 0.18 * OUT_R * ratio, 0, w)
+  add('ArmL2', -0.9 * Math.max(0, Math.sin(left)) * ratio, 0, 0, w)
+  add('ArmR2', -0.9 * Math.max(0, Math.sin(right)) * ratio, 0, 0, w)
+  const kick = Math.sin(time * 11) * 0.32
+  add('LegL1', kick * ratio, 0.05 * OUT_L * ratio, 0, w)
+  add('LegR1', -kick * ratio, 0.05 * OUT_R * ratio, 0, w)
+  add('LegL2', 0.2 * ratio, 0, 0, w)
+  add('LegR2', 0.2 * ratio, 0, 0, w)
+  add('Spine1', -0.08 * ratio, 0, Math.sin(stroke) * 0.3 * ratio, w)
+  add('Neck1', -0.75 * ratio, 0, -Math.sin(stroke) * 0.2 * ratio, w)
 }
 
-/** In the air off a ramp: arms flung out like wings, legs kicking apart. */
-function flying(time, w) {
-  const flap = Math.sin(time * 9) * 0.12
-  add('ArmL1', 1.05, 1.15 * OUT_L + flap, 0, w)
-  add('ArmR1', 1.05, 1.15 * OUT_R - flap, 0, w)
-  add('ArmL2', 0.4, 0, 0, w)
-  add('ArmR2', 0.4, 0, 0, w)
-  add('LegL1', -0.35, 0.18 * OUT_L, 0, w)
-  add('LegR1', 0.2, 0.18 * OUT_R, 0, w)
-  add('LegL2', 0.5, 0, 0, w)
-  add('Neck1', -0.2, 0, 0, w)
+/**
+ * How far to lie the body down while swimming, radians forward about its feet, for
+ * `swim` (0-1) at `ratio` of top speed: nearly upright treading water, flat out in the
+ * crawl. With `swimLift`, what holders turn and raise the body by.
+ */
+export const swimTilt = (swim, ratio) => swim * (0.22 + 1.2 * clamp01(ratio))
+
+/**
+ * Turned down by `tilt`, how far to raise the body (`lift`) and move it back (`back`,
+ * along its facing) so its hips float just under the surface, `depth` above the feet,
+ * right over where the swimmer is.
+ */
+export function swimLift(tilt, depth, out) {
+  const hip = 0.9
+  out.lift = Math.max(0, depth - 0.12 - hip * Math.cos(tilt))
+  out.back = hip * Math.sin(tilt)
+  return out
 }
 
 /** Arms up and waving, bouncing on the spot: the celebration once you've stopped. */
@@ -221,11 +219,13 @@ function cheering(time, w) {
 
 /**
  * @param {{ time?: number, speed?: number, maxSpeed?: number, grounded?: boolean,
- *   vy?: number, stride?: number, sliding?: boolean, launch?: number, stand?: number,
- *   air?: number, kick?: number, emote?: string|null }} motion
- *   `sliding` lies the body down on the board; `speed` is then the slide's speed.
- *   While sliding, `launch` (0-1) is the dive onto the board, `air` (0-1) how far into
- *   a jump's pose, and `stand` (0-1) getting up to celebrate at the end.
+ *   vy?: number, stride?: number, carry?: number, scoop?: number, pour?: number,
+ *   swim?: number, stroke?: number, flick?: number, cheer?: number, emote?: string|null }} motion
+ *   `carry` (0-1) holds the bucket in the right hand; `scoop` is how far (0-1) through a
+ *   scoop in a well (below 0: not scooping); `pour` (0-1) tips the bucket out at a pit;
+ *   `swim` (0-1) is swimming, `speed` then the swimming speed and `stroke` the phase of
+ *   the stroke (radians); `flick` (0-1) swings the bucket up for a tap; `cheer` (0-1)
+ *   waves.
  *   `emote` is a Boxity emote id to play over this pose, or null. It isn't posed here:
  *   the Bloxity avatar blends the emote clip on top of this pose (avatarRig.updateEmote),
  *   so the same motion object drives both. `emoteFromAnim(r.anim)` in bloxity/emotes.js
@@ -239,11 +239,13 @@ export function computePose(motion) {
     grounded = true,
     vy = 0,
     stride: phase = time * 5,
-    sliding = false,
-    launch = 1,
-    stand = 0,
-    air = 0,
-    kick = -1,
+    carry = 0,
+    scoop = -1,
+    pour = 0,
+    swim = 0,
+    stroke = 0,
+    flick = 0,
+    cheer = 0,
   } = motion
   for (const name of POSED_BONES) {
     const b = pose.bones[name]
@@ -252,27 +254,28 @@ export function computePose(motion) {
     b.twist = 0
   }
   pose.lift = 0
+  const ratio = clamp01(speed / Math.max(maxSpeed, 0.001))
 
-  if (sliding) {
-    if (launch < 1) launching(launch, time)
-    else {
-      prone(time, speed, 1 - stand)
-      if (air > 0) flying(time, air)
-      if (stand > 0) cheering(time, stand)
-    }
-    return pose
+  if (swim > 0) {
+    swimming(time, stroke, ratio, swim)
+    if (swim >= 1) return pose
   }
-  // Kicking the tire off (`kick` 0-1 through the kick, below 0 or above 1 for none):
-  // eased in and out over the stance.
-  const kicking = kick >= 0 && kick <= 1
-  const kickWeight = kicking ? smooth(0, 0.1, kick) * (1 - smooth(0.9, 1, kick)) : 0
-  if (kicking) {
-    stance(1 - kickWeight, time)
-    kickPose(kick, kickWeight)
+  const land = 1 - swim
+  if (scoop >= 0 && scoop <= 1) {
+    stance(0.3 * land, time)
+    scooping(scoop, land)
   } else if (grounded) {
-    const ratio = clamp01(speed / Math.max(maxSpeed, 0.001))
-    stance(1 - smooth(0.05, 0.4, ratio), time)
-    if (ratio > 0.02) stride(phase, ratio)
+    stance((1 - smooth(0.05, 0.4, ratio)) * land, time)
+    if (ratio > 0.02) {
+      // Walking with the bucket: only the free arm swings fully.
+      stride(phase, ratio * land)
+      add('ArmR1', Math.sin(phase) * -0.45 * ratio * carry, 0, 0, land)
+    }
+    if (carry > 0) carrying(carry * land * (1 - pour))
+    if (pour > 0) pouring(time, pour * land)
+    // A tap's flick: the bucket swung up in front and back down.
+    if (flick > 0) add('ArmR1', -1.1, 0.1 * OUT_R, 0, flick * land)
+    if (cheer > 0) cheering(time, cheer * land)
   } else {
     airborne(vy)
   }

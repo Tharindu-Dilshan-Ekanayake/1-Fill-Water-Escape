@@ -33,8 +33,8 @@ export const CLOUDS = {
 /** Every surface colour in the lobby. */
 export const PALETTE = {
   plaza: '#c3ec86',
-  path: '#f3d57e',
-  pathEdge: '#e5a94f',
+  path: '#c99a6a',
+  pathEdge: '#9a6a42',
   apron: '#acdff5',
   apronEdge: '#e6f6fd',
   shopFloor: '#e7eef6',

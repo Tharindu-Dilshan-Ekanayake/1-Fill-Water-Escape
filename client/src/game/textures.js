@@ -104,7 +104,7 @@ export function createStudTexture({
   texture.wrapS = RepeatWrapping
   texture.wrapT = RepeatWrapping
   // three clamps this to what the GPU supports. Keeps the studs crisp at grazing
-  // angles instead of smearing into a blur down the track.
+  // angles instead of smearing into a blur into the distance.
   texture.anisotropy = 16
   return texture
 }

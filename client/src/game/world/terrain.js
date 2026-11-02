@@ -1,5 +1,5 @@
 import { hash2, mulberry32 } from '@shared/rng'
-import { PLAZA } from '@shared/world'
+import { COURSE_HALF_WIDTH, COURSE_SIDE_GROUND, PLAZA } from '@shared/world'
 
 import { STYLE } from '../materials'
 import { PALETTE } from '../sceneStyle'
@@ -14,8 +14,12 @@ import { PALETTE } from '../sceneStyle'
 
 const CELL = 4
 const BOUNDS = { minX: -176, maxX: 156, minZ: -150, maxZ: 136 }
-/** The throw track leaves the plaza northwards through this gap in the hills. */
-const CORRIDOR_HALF_WIDTH = 34
+/**
+ * North of the plaza the course builds its own ground - its walls and the grass beyond
+ * them, out to this far either side - so no hills there: overlapping them, their faces
+ * and the course's would flicker against each other.
+ */
+const COURSE_HALF_SPAN = COURSE_HALF_WIDTH + COURSE_SIDE_GROUND + 2
 const STEP = 2
 
 function smooth(t) {
@@ -42,13 +46,13 @@ function distanceOutside(rect, x, z) {
   return Math.hypot(dx, dz)
 }
 
-const CORRIDOR = { minX: -CORRIDOR_HALF_WIDTH, maxX: CORRIDOR_HALF_WIDTH, minZ: -10000, maxZ: PLAZA.minZ }
+const COURSE_GROUND = { minX: -COURSE_HALF_SPAN, maxX: COURSE_HALF_SPAN, minZ: -10000, maxZ: PLAZA.minZ }
 
 /** Terrain height at a cell centre, or 0 where the ground is open. */
 export function terrainHeight(x, z) {
   if (distanceOutside(PLAZA, x, z) === 0) return 0
-  if (distanceOutside(CORRIDOR, x, z) === 0) return 0
-  const d = Math.min(distanceOutside(PLAZA, x, z), distanceOutside(CORRIDOR, x, z))
+  if (z < PLAZA.minZ && Math.abs(x) < COURSE_HALF_SPAN + CELL / 2) return 0
+  const d = Math.min(distanceOutside(PLAZA, x, z), distanceOutside(COURSE_GROUND, x, z))
   // A low first terrace right at the plaza edge, rising in big steps further out.
   const base = d < 6 ? 4 : 6 + Math.floor(d / 14) * 5
   const n = valueNoise(x, z, 28, 11) * 7 + valueNoise(x, z, 9, 23) * 2.5

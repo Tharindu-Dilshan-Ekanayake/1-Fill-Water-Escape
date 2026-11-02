@@ -22,7 +22,7 @@ import { skyUniforms } from './skyState'
 /** Unit dome, scaled to just inside the camera's far plane for the current preset. */
 const SKY_RADIUS = 1
 
-/** Centre of the cloud field: the middle of the track. */
+/** Centre of the cloud field: over the lobby and the start of the course. */
 const CLOUD_CENTER = [0, 0, -80]
 /** Radians per second the whole cloud field turns about its centre. */
 const CLOUD_DRIFT = 0.004

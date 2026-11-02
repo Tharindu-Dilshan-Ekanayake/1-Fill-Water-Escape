@@ -5,13 +5,13 @@ import { iconUrl } from './icons'
 import StrokeText from './StrokeText'
 
 const TIPS = [
-  'Stand on a training pad to gain Health automatically!',
-  'More Health = your tire rolls further and smashes tougher walls!',
-  'Rebirth at max level for x2, x3, x4... Health and a higher level cap.',
-  'Every wall you smash opens a new zone with more Wins per metre.',
-  'Spend Wins on stronger tires, pets and better pads.',
-  'Pets multiply all the Health you gain.',
-  'Your tire earns Health every second it rolls!',
+  'Stand in a well to scoop Water Power automatically!',
+  'More Water Power = deeper pits filled, so you swim further up the course!',
+  'Claim the Wins pad on the furthest ledge you reach - the higher, the more Wins.',
+  'Stuck at a pit? The Skip pad fills it for Wins until your next rebirth.',
+  'Rebirth at max level for x2, x3, x4... Water and a higher level cap.',
+  'Spend Wins on bigger buckets, pets and better wells.',
+  'Pets multiply all the Water you scoop.',
 ]
 
 /**
@@ -51,12 +51,12 @@ export function LoadingScreen({ done }) {
       }}
     >
       <div className="pp-loading-disc" aria-hidden="true">
-        <img src={iconUrl('tire')} alt="" width="150" height="150" draggable={false} />
+        <img src={iconUrl('bucket')} alt="" width="150" height="150" draggable={false} />
       </div>
 
       <h1 className="m-0 text-center leading-none" style={{ fontSize: 'clamp(40px, 9vw, 96px)', transform: 'rotate(-3deg)' }}>
         <StrokeText stroke="0.16em" gradient="linear-gradient(180deg, #ffffff 0%, #ffffff 55%, #ffe36b 56%, #ffb21e 100%)">
-          +1 SLIDE DOWNHILL
+          +1 FILL WATER ESCAPE
         </StrokeText>
       </h1>
 

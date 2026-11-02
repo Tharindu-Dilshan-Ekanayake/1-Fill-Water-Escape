@@ -7,12 +7,12 @@ import { createProfile, createSession } from '@shared/logic'
  * Everything the UI renders from. Written by the network layer (profile, events) and
  * the 10 Hz game ticker (zones, timers) - never from a frame loop.
  *
- * Components must select narrowly (`useGame((s) => s.profile.wins)`), so a Health tick
- * re-renders the Health label and nothing else.
+ * Components must select narrowly (`useGame((s) => s.profile.wins)`), so a Water tick
+ * re-renders the Water label and nothing else.
  */
 
 
-export const useGame = create((set, get) => ({
+export const useGame = create((set) => ({
   /** Authoritative copy of the player's save, as last sent by the server. */
   profile: createProfile('local', 'Player'),
   /** Per-connection state: session start, claimed playtime rewards. */
@@ -36,20 +36,24 @@ export const useGame = create((set, get) => ({
   sphinxStock: SPHINX_STOCK_DEFAULT,
   leaderboards: null,
 
-  /** Where the player is standing, from the ticker. */
-  zone: { pad: -1, padNear: -1, rollZone: false, stand: -1, egg: null, portal: null, freeReward: false, sphinx: false },
+  /**
+   * Where the player is standing, from the ticker. `well`: the well you're in (-1 if
+   * none), `wellNear` one you're at the edge of. Out on the course `stage` is the stage
+   * under you (-1 in the lobby), `winsPad` / `skipPad` the ledge whose pad you're on (or
+   * -1), and `startLine` whether you're on the start line (where Auto Win claims).
+   */
+  zone: { well: -1, wellNear: -1, stand: -1, egg: null, portal: null, freeReward: false, sphinx: false, stage: -1, winsPad: -1, skipPad: -1, startLine: false },
 
   /** Which modal panel is open: 'rebirth' | 'daily' | 'pets' | 'items' | 'store' | ... */
   panel: null,
   /** Extra data for the open panel (e.g. which egg the hatch panel is for). */
   panelData: null,
 
-  /** A roll in progress: { distance, wins, prize, blocked, duration, best }. */
-  roll: null,
-  /** Wins earned by the current roll, held back from the HUD until the tire stops. */
-  pendingWins: 0,
-  /** "+N Wins!" result once the tire has stopped. */
-  rollResult: null,
+  /**
+   * A Wins pad's payout, for the "+N Wins!" banner: { stage, wins, prize, best, auto,
+   * id }. `auto` = Auto Win at the start line (no trip home).
+   */
+  runResult: null,
   /** A short celebration banner: { text, id } (new zone, ad reward, Gems purchase). */
   toast: null,
   /** Active hatch animation: { eggId, pets }. */
@@ -75,18 +79,8 @@ export const useGame = create((set, get) => ({
 
   /** kind: 'info' | 'error' | 'success' | 'badge' */
 
-  startRoll: (roll) => set({ roll, pendingWins: roll.wins + roll.prize }),
-  endRoll: () => {
-    const { roll } = get()
-    set({
-      roll: null,
-      pendingWins: 0,
-      rollResult: roll
-        ? { wins: roll.wins, prize: roll.prize, distance: roll.distance, blocked: roll.blocked, best: roll.best, id: Date.now() }
-        : null,
-    })
-  },
-  clearRollResult: () => set({ rollResult: null }),
+  showRunResult: (result) => set({ runResult: { ...result, id: Date.now() } }),
+  clearRunResult: () => set({ runResult: null }),
   showToast: (text) => set({ toast: { text, id: Date.now() } }),
 
   setHatch: (hatch) => set({ hatch }),

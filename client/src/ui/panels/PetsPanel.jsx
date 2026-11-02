@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 
-import { MAX_EQUIPPED_PETS, MAX_PET_INVENTORY, PETS, RARITIES } from '@shared/balance'
+import { GOLDEN_BOOST, GOLDEN_FUSE, MAX_EQUIPPED_PETS, MAX_PET_INVENTORY, PETS, RARITIES } from '@shared/balance'
 import { formatMultiplier } from '@shared/format'
-import { petMultiplier, petSortKey } from '@shared/logic'
+import { petMult, petMultiplier, petSortKey } from '@shared/logic'
 
 import { actions } from '../../net/actions'
 import { useGame } from '../../store/game'
@@ -24,23 +24,26 @@ function PetCard({ pet, equipped, selected, onClick }) {
       style={{
         height: u(150),
         borderRadius: u(12),
-        border: `${u(5)} solid ${selected ? '#ffffff' : '#111'}`,
-        background: `radial-gradient(circle at 50% 40%, ${rarity.color}cc, ${rarity.color}55 60%, rgba(20,22,26,0.9))`,
+        border: `${u(5)} solid ${selected ? '#ffffff' : pet.golden ? '#ffc21f' : '#111'}`,
+        background: pet.golden
+          ? 'radial-gradient(circle at 50% 40%, #fff3a8, #ffc21f 55%, #a86b00)'
+          : `radial-gradient(circle at 50% 40%, ${rarity.color}cc, ${rarity.color}55 60%, rgba(20,22,26,0.9))`,
         boxShadow: selected ? `0 0 0 ${u(3)} #111` : 'none',
       }}
     >
       <PetIcon id={pet.id} size={u(112)} />
       <span className="absolute" style={{ bottom: u(2), fontSize: u(28) }}>
         <StrokeText stroke={u(6)} gradient={GRADIENTS.gold}>
-          {formatMultiplier(info.mult)}
+          {formatMultiplier(petMult(pet))}
         </StrokeText>
       </span>
       {equipped && <Icon name="check" size={u(40)} className="absolute" style={{ top: u(4), right: u(4) }} />}
+      {pet.golden && <Icon name="starGold" size={u(36)} className="absolute" style={{ top: u(4), left: u(4) }} />}
     </button>
   )
 }
 
-/** Pet inventory: equip up to three, equip-best, delete. */
+/** Pet inventory: equip up to three, equip-best, make golden (three into one), delete. */
 export function PetsPanel() {
   const profile = useGame((s) => s.profile)
   const [selectedUid, setSelectedUid] = useState(null)
@@ -52,6 +55,8 @@ export function PetsPanel() {
   const selected = profile.pets.find((p) => p.uid === selectedUid) || null
   const selectedInfo = selected ? PETS[selected.id] : null
   const isEquipped = selected ? profile.equippedPets.includes(selected.uid) : false
+  // How many of the selected pet could fuse: plain ones of its kind.
+  const copies = selected ? profile.pets.filter((p) => p.id === selected.id && !p.golden).length : 0
 
   return (
     <Panel title="PETS" width={980}>
@@ -63,7 +68,7 @@ export function PetsPanel() {
         </span>
         <span style={{ fontSize: u(36) }}>
           <StrokeText stroke={u(7)} gradient={GRADIENTS.gold}>
-            Pet Health {formatMultiplier(petMultiplier(profile))}
+            Pet Water {formatMultiplier(petMultiplier(profile))}
           </StrokeText>
         </span>
         <span style={{ fontSize: u(30) }}>
@@ -104,13 +109,22 @@ export function PetsPanel() {
           <PetIcon id={selected.id} size={u(110)} />
           <div className="flex flex-1 flex-col" style={{ minWidth: u(220) }}>
             <span style={{ fontSize: u(44) }}>
-              <StrokeText stroke={u(8)}>{selectedInfo.name}</StrokeText>
+              <StrokeText stroke={u(8)} gradient={selected.golden ? GRADIENTS.gold : undefined}>
+                {selected.golden ? `Golden ${selectedInfo.name}` : selectedInfo.name}
+              </StrokeText>
             </span>
             <span style={{ fontSize: u(30) }}>
               <StrokeText stroke={u(6)} fill={RARITIES[selectedInfo.rarity].color}>
-                {RARITIES[selectedInfo.rarity].name} · {formatMultiplier(selectedInfo.mult)} Health
+                {RARITIES[selectedInfo.rarity].name} · {formatMultiplier(petMult(selected))} Water
               </StrokeText>
             </span>
+            {!selected.golden && (
+              <span style={{ fontSize: u(22) }}>
+                <StrokeText stroke={u(5)}>
+                  {GOLDEN_FUSE} of these make a Golden {selectedInfo.name}: {formatMultiplier(petMult({ id: selected.id, golden: true }))} Water ({copies}/{GOLDEN_FUSE})
+                </StrokeText>
+              </span>
+            )}
           </div>
           <ChunkyButton
             gradient={isEquipped ? GRADIENTS.greyButton : GRADIENTS.greenButton}
@@ -121,6 +135,21 @@ export function PetsPanel() {
               <StrokeText stroke={u(7)}>{isEquipped ? 'Unequip' : 'Equip'}</StrokeText>
             </span>
           </ChunkyButton>
+          {!selected.golden && copies >= GOLDEN_FUSE && (
+            <ChunkyButton
+              gradient={GRADIENTS.goldButton}
+              onClick={() => {
+                actions.fusePets(selected.id)
+                setSelectedUid(null)
+              }}
+              title={`Fuse ${GOLDEN_FUSE} into a Golden ${selectedInfo.name} (x${GOLDEN_BOOST} the bonus)`}
+              style={{ height: u(76), padding: `0 ${u(24)}` }}
+            >
+              <span style={{ fontSize: u(34) }}>
+                <StrokeText stroke={u(7)}>Make Golden</StrokeText>
+              </span>
+            </ChunkyButton>
+          )}
           <ChunkyButton
             gradient={GRADIENTS.redButton}
             onClick={() => {

@@ -35,6 +35,8 @@ export function registerNameplateElements(elements, localBubbleEl = null) {
       el,
       copies: [...el.querySelectorAll('[data-name]')],
       bubble: el.querySelector('[data-bubble]'),
+      tag: el.querySelector('[data-tag]'),
+      tagText: '',
       text: '',
       bubbleText: '',
       shown: false,
@@ -58,9 +60,9 @@ function setBubble(holder, el, text) {
 /**
  * Shows slot `i` at screen (x, y) with `text`; null x hides it. `uid` is the player's
  * Boxity id (their synced `uid`, '' for guests): it picks their chat bubble, falling
- * back to matching by name.
+ * back to matching by name. `tag` is the small line under the name: how far they've got.
  */
-export function placeNameplate(i, text, x, y, alpha = 1, uid = '') {
+export function placeNameplate(i, text, x, y, alpha = 1, uid = '', tag = '') {
   const slot = pool[i]
   if (!slot) return
   if (x === null) {
@@ -75,6 +77,11 @@ export function placeNameplate(i, text, x, y, alpha = 1, uid = '') {
     for (const copy of slot.copies) copy.textContent = text
   }
   setBubble(slot, slot.bubble, bubbleFor(uid, text))
+  if (slot.tag && slot.tagText !== tag) {
+    slot.tagText = tag
+    slot.tag.textContent = tag
+    slot.tag.style.display = tag ? 'block' : 'none'
+  }
   if (!slot.shown) {
     slot.el.style.display = 'block'
     slot.shown = true

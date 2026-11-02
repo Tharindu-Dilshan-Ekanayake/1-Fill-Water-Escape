@@ -1,10 +1,25 @@
-import { isPadUnlocked } from '@shared/logic'
-import { eggStandNear, FREE_REWARD, inRollZone, PAD_COUNT, padAt, padRect, portalAt, SPHINX_STAND, standAt } from '@shared/world'
+import { isWellUnlocked } from '@shared/logic'
+import {
+  COURSE_START_Z,
+  eggStandNear,
+  FREE_REWARD,
+  onCourse,
+  onStartLine,
+  portalAt,
+  skipPadAt,
+  SPHINX_STAND,
+  stageAtZ,
+  standAt,
+  WELL_COUNT,
+  wellAt,
+  wellRect,
+  winsPadAt,
+} from '@shared/world'
 
 import { sfx } from '../audio/sfx'
 import { actions } from '../net/actions'
 import { getGame, useGame } from '../store/game'
-import { padLabelSpec } from './labels/lobbyLabels'
+import { wellLabelSpec } from './labels/lobbyLabels'
 import { updateWorldLabel } from './labels/registry'
 import { runtime } from './runtime'
 
@@ -12,77 +27,91 @@ const TICK_MS = 100
 
 function sameZone(a, b) {
   return (
-    a.pad === b.pad &&
-    a.padNear === b.padNear &&
+    a.well === b.well &&
+    a.wellNear === b.wellNear &&
     a.sphinx === b.sphinx &&
-    a.rollZone === b.rollZone &&
     a.stand === b.stand &&
     a.egg === b.egg &&
     a.portal === b.portal &&
-    a.freeReward === b.freeReward
+    a.freeReward === b.freeReward &&
+    a.stage === b.stage &&
+    a.winsPad === b.winsPad &&
+    a.skipPad === b.skipPad &&
+    a.startLine === b.startLine
   )
 }
 
-/** Locked pads become solid walls for the controller; their signs say what's open. */
-function syncPads(profile) {
+/** Locked wells become solid walls for the controller; their signs say what's open. */
+function syncWells(profile) {
   const walls = []
-  for (let i = 0; i < PAD_COUNT; i += 1) {
-    const unlocked = isPadUnlocked(profile, i)
-    if (!unlocked) walls.push(padRect(i))
-    updateWorldLabel(`pad-${i}`, padLabelSpec(i, unlocked))
+  for (let i = 0; i < WELL_COUNT; i += 1) {
+    const unlocked = isWellUnlocked(profile, i)
+    if (!unlocked) walls.push(wellRect(i))
+    updateWorldLabel(`well-${i}`, wellLabelSpec(i, unlocked))
   }
   runtime.dynamicColliders = walls
 }
 
-/** What syncPads depends on, so it only runs when that changes. */
-const padKey = (profile) => `${profile.rebirths}:${profile.passes.padVeryOp ? 1 : 0}${profile.passes.padBest ? 1 : 0}`
+/** What syncWells depends on, so it only runs when that changes. */
+const wellKey = (profile) => `${profile.rebirths}:${profile.passes.wellVeryOp ? 1 : 0}${profile.passes.wellBest ? 1 : 0}`
 
 /**
- * The 10 Hz bridge between the frame-rate world and the UI: works out which zone the
- * player stands in, tells the authority about pad changes, and
- * keeps locked-pad walls in step with the profile. This - not the render loop - is
- * what writes zone state into the store, and only when something actually changed.
+ * The 10 Hz bridge between the frame-rate world and the UI: works out where the player
+ * stands - a well, a shop stand, the course and its pads - tells the authority about
+ * well changes and Wins pads stepped on, and keeps locked-well walls in step with the
+ * profile. This - not the render loop - is what writes zone state into the store, and
+ * only when something actually changed.
  *
  * @returns {() => void} stop
  */
 export function startGameTicker() {
-  let lastPad = -1
-  let lastKey = padKey(getGame().profile)
+  let lastWell = -1
+  let lastWinsPad = -1
+  let lastKey = wellKey(getGame().profile)
 
-  syncPads(getGame().profile)
+  syncWells(getGame().profile)
   const unsubscribe = useGame.subscribe((state, prev) => {
     if (state.profile === prev.profile) return
-    const key = padKey(state.profile)
+    const key = wellKey(state.profile)
     if (key === lastKey) return
     lastKey = key
-    syncPads(state.profile)
+    syncWells(state.profile)
   })
 
   const tick = () => {
     const game = getGame()
     const p = runtime.player.position
     const egg = eggStandNear(p.x, p.z)
+    const course = onCourse(p.x, p.z)
     const zone = {
-      pad: padAt(p.x, p.z, -0.2),
-      // Standing at a pad's edge (a locked one's wall stops you there).
-      padNear: padAt(p.x, p.z, 1.8),
+      well: wellAt(p.x, p.z, -0.2),
+      // Standing at a well's edge (a locked one's wall stops you there).
+      wellNear: wellAt(p.x, p.z, 1.8),
       sphinx: Math.hypot(p.x - SPHINX_STAND.x, p.z - SPHINX_STAND.z) < 5.5,
-      rollZone: inRollZone(p.x, p.z),
       stand: standAt(p.x, p.z),
       egg: egg ? egg.eggId : null,
       portal: portalAt(p.x, p.z)?.id ?? null,
       freeReward: Math.hypot(p.x - FREE_REWARD.x, p.z - FREE_REWARD.z) < FREE_REWARD.radius,
+      stage: course && p.z < COURSE_START_Z ? stageAtZ(p.z) : -1,
+      winsPad: course ? winsPadAt(p.x, p.z) : -1,
+      skipPad: course ? skipPadAt(p.x, p.z) : -1,
+      startLine: course && onStartLine(p.x, p.z),
     }
     if (!sameZone(zone, game.zone)) {
       if (zone.portal && zone.portal !== game.zone.portal) actions.portal()
       game.setZone(zone)
     }
-    if (zone.pad !== lastPad) {
-      if (zone.pad >= 0 && isPadUnlocked(game.profile, zone.pad)) {
-        actions.enterPad(zone.pad)
-        sfx.treadmillEnter()
-      } else if (lastPad >= 0) actions.leavePad()
-      lastPad = zone.pad
+    if (zone.well !== lastWell) {
+      if (zone.well >= 0 && isWellUnlocked(game.profile, zone.well)) {
+        actions.enterWell(zone.well)
+        sfx.wellEnter()
+      } else if (lastWell >= 0) actions.leaveWell()
+      lastWell = zone.well
+    }
+    // Stepping onto a Wins pad claims it (and the server sends you home).
+    if (zone.winsPad !== lastWinsPad) {
+      if (zone.winsPad >= 1) actions.claim(zone.winsPad)
+      lastWinsPad = zone.winsPad
     }
   }
 

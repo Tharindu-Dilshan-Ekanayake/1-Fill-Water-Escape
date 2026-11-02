@@ -1,8 +1,6 @@
 import { CanvasTexture, LinearMipmapLinearFilter, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace } from 'three'
 
-import { ROLL_ZONE, SHOP_SIGN } from '@shared/world'
-
-import { ARCH_SIGN } from './rollZone'
+import { SHOP_SIGN } from '@shared/world'
 
 const FONT = '"Fredoka One", "Arial Rounded MT Bold", sans-serif'
 
@@ -70,9 +68,9 @@ function paintText(text, maxTexture, { aspect, fill, edge, slant = 0.22, worldWi
 }
 
 /**
- * The painted signs, drawn once the font has loaded: "ROLL ZONE" across the strip at
- * the start of the track, "ROLL!" on the start arch and "TIRES" on the showroom's sign. Each
- * sits a couple of centimetres proud of what it's painted on, so it can't sink into it.
+ * The painted signs, drawn once the font has loaded: "BUCKETS" on the bucket shop's
+ * sign. Each sits a couple of centimetres proud of what it's painted on, so it can't
+ * sink into it.
  *
  * @param {number} maxTexture texture size cap for the preset
  * @returns {Promise<Array<{ geometry, material, texture, position: number[], rotation: number[] }>>}
@@ -80,22 +78,11 @@ function paintText(text, maxTexture, { aspect, fill, edge, slant = 0.22, worldWi
 export async function createPaintedSigns(maxTexture) {
   await document.fonts?.load(`64px ${FONT}`).catch(() => null)
 
-  const zoneWidth = ROLL_ZONE.maxX - ROLL_ZONE.minX - 5
-  const zone = paintText('ROLL ZONE', maxTexture, {
-    aspect: 0.24,
-    fill: ['#ffffff', '#ffffff', '#e6ecf5'],
-    edge: '#9aa6b8',
-    worldWidth: zoneWidth,
-  })
-  // Just above the strip's raised yellow fill (its top is 0.1 up), read from the plaza.
-  zone.position = [0, 0.13, (ROLL_ZONE.minZ + ROLL_ZONE.maxZ) / 2 + 0.3]
-  zone.rotation = [-Math.PI / 2, 0, 0]
-
   const boardWidth = SHOP_SIGN.maxZ - SHOP_SIGN.minZ - 3
-  const board = paintText('TIRES', maxTexture, {
+  const board = paintText('BUCKETS', maxTexture, {
     aspect: 0.26,
-    fill: ['#fffbd0', '#ffd21f', '#ff8a00'],
-    edge: '#c2410c',
+    fill: ['#e0faff', '#7fe2ff', '#2f8ff2'],
+    edge: '#1f3c96',
     slant: 0.14,
     worldWidth: boardWidth,
   })
@@ -103,15 +90,5 @@ export async function createPaintedSigns(maxTexture) {
   board.position = [SHOP_SIGN.x - 0.43, SHOP_SIGN.top - 4.1, (SHOP_SIGN.minZ + SHOP_SIGN.maxZ) / 2]
   board.rotation = [0, -Math.PI / 2, 0]
 
-  const arch = paintText('ROLL!', maxTexture, {
-    aspect: 0.3,
-    fill: ['#fffbd0', '#ffd21f', '#ff8a00'],
-    edge: '#c2410c',
-    slant: 0.14,
-    worldWidth: ARCH_SIGN.width - 0.3,
-  })
-  arch.position = [0, ARCH_SIGN.y, ARCH_SIGN.faceZ + 0.03]
-  arch.rotation = [0, 0, 0]
-
-  return [zone, board, arch]
+  return [board]
 }

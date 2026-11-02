@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 
-import { createProfile } from '../../shared/logic.js'
+import { createProfile, weekOf } from '../../shared/logic.js'
 import { PlayerSession } from '../../shared/session.js'
 import { asGuestId, resolveIdentity, verifyAdReward } from '../src/bloxityApi.js'
 import { readBloxityEnv } from '../src/bloxityEnv.js'
@@ -17,6 +17,7 @@ import {
   releaseGemGrant,
   saveProfile,
   topPlayers,
+  weeklyRank,
 } from '../src/db.js'
 import { applyGemsFor, gemsWebhook, parseGemWebhook, profileIdOf, webhookSecretOk } from '../src/gems.js'
 import { activePlayers } from '../src/registry.js'
@@ -47,7 +48,7 @@ test('Boxity URLs come from the environment, production only as the fallback', (
   assert.equal(local.matchmakerUrl, 'https://play.bloxity.io')
   assert.equal(local.portalUrl, 'https://bloxity.io')
   assert.equal(local.staticUrl, 'https://static.bloxity.io')
-  assert.equal(local.gameSlug, '1-tire-rolling')
+  assert.equal(local.gameSlug, '1-fill-water-escape')
   assert.equal(local.hosted, false)
   assert.equal(hosted.apiUrl, 'https://api.stage.example', 'trailing slash trimmed')
   assert.equal(hosted.gameSlug, 'tire')
@@ -112,8 +113,13 @@ test('an ad pays only when Boxity says the token is valid', async () => {
 test('leaderboard scores are whole numbers from the profile', () => {
   const p = createProfile('a', 'A')
   Object.assign(p, { rebirths: 3 })
-  Object.assign(p.stats, { totalWins: 1234.6, bestDistance: 569.9, playtime: 3599 })
-  assert.deepEqual(leaderboardScores(p), { rebirths: 3, wins: 1234, distance: 569, playtime: 59 })
+  Object.assign(p.stats, { totalWins: 1234.6, bestStage: 59, bestStage2: 17, playtime: 3599 })
+  const now = Date.UTC(2026, 10, 4)
+  p.weekly = { week: weekOf(now), wins: 500.7, prev: { week: 0, wins: 0 }, rewarded: 0 }
+  // Stage 17 of World 2 is 59 + 17 overall; this week's Wins, and none once the week turns.
+  assert.deepEqual(leaderboardScores(p, now), { rebirths: 3, wins: 1234, stage: 76, playtime: 59, wins_week: 500 })
+  assert.equal(leaderboardScores(p, now + 7 * 86400000).wins_week, 0)
+  assert.equal(BLOXITY_LEADERBOARDS.find((b) => b.id === 'wins_week').reset, 'weekly')
   assert.deepEqual(
     BLOXITY_LEADERBOARDS.map((b) => b.id),
     Object.keys(leaderboardScores(p)),
@@ -126,7 +132,8 @@ test('only changed scores are reported, as legion_<id>', () => {
   const lastSent = new Map([
     ['legion_a|rebirths', 2],
     ['legion_a|wins', 0],
-    ['legion_a|distance', 0],
+    ['legion_a|stage', 0],
+    ['legion_a|wins_week', 0],
   ])
   assert.deepEqual(changedScores([{ id: 'a', profile: p }], lastSent), [{ board: 'playtime', userId: 'legion_a', score: 0 }])
   assert.deepEqual(
@@ -219,11 +226,11 @@ test('a pod applies grants to the verified players it holds, exactly once', asyn
   const room = { members: new Map([['s5', member]]), syncPlayer: () => {} }
   activePlayers.set('acc5', { room, client: { sessionId: 's5' } })
   try {
-    await recordGemGrant({ transactionId: 'txn-5', userId: 'acc5', sku: 'health_x2' })
+    await recordGemGrant({ transactionId: 'txn-5', userId: 'acc5', sku: 'water_x2' })
     await Promise.all([applyGemsFor(['acc5']), applyGemsFor(['acc5'])])
-    assert.equal(profile.passes.healthX2, true)
+    assert.equal(profile.passes.waterX2, true)
     assert.equal(profile.wins, 0, 'applied once, not turned into Wins by a second copy')
-    assert.equal((await loadProfile('acc5', 'Five', 'test')).passes.healthX2, true, 'saved')
+    assert.equal((await loadProfile('acc5', 'Five', 'test')).passes.waterX2, true, 'saved')
     assert.deepEqual(await pendingGemGrants(['acc5']), [])
   } finally {
     activePlayers.delete('acc5')
@@ -252,6 +259,28 @@ test('guest progress carries into a new account once', async () => {
   await saveProfile(other, 'x')
   assert.equal(await carryOverGuest('acc7', ['guest-g2'], 'Seven'), null)
   assert.equal(await carryOverGuest('acc10', ['guest-g2'], 'Ten'), 'guest-g2', 'still unused, so still available')
+})
+
+test("the weekly board: this week's Wins earners, and where last week's would rank", async () => {
+  const week = weekOf(Date.now())
+  const make = async (id, wins, prevWins = 0) => {
+    const p = createProfile(id, id.toUpperCase())
+    p.weekly = { week, wins, prev: { week: week - 1, wins: prevWins }, rewarded: 0 }
+    await saveProfile(p, 'x')
+  }
+  await make('wk1', 500, 90)
+  await make('wk2', 900, 10)
+  await make('wk3', 0, 50)
+  const boards = await topPlayers(10)
+  assert.deepEqual(
+    boards.weekly.filter((r) => r.name.startsWith('WK')).map((r) => r.name),
+    ['WK2', 'WK1'],
+    "this week's, best first, none at 0",
+  )
+  assert.equal(await weeklyRank(week - 1, 90), 1, 'top of last week')
+  assert.equal(await weeklyRank(week - 1, 50), 2)
+  assert.equal(await weeklyRank(week - 1, 10), 3)
+  assert.equal(await weeklyRank(week, 600), 2, 'this week too: behind WK2')
 })
 
 // --- Open Rooms reporter -----------------------------------------------------------

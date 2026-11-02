@@ -1,5 +1,5 @@
 import { MAX_EQUIPPED_PETS } from '@shared/balance'
-import { rebirthProgress } from '@shared/logic'
+import { currentQuests, rebirthProgress } from '@shared/logic'
 
 import { useGame } from '../../store/game'
 import Icon from '../Icon'
@@ -14,6 +14,7 @@ const TILE_GRADIENTS = {
   rebirth: 'linear-gradient(180deg, #b4efff 0%, #4cb8ff 50%, #2477e8 100%)',
   items: 'linear-gradient(180deg, #ffb8c6 0%, #ff5f86 50%, #d92b5a 100%)',
   store: 'linear-gradient(180deg, #c9ff96 0%, #6fe04a 50%, #26ad3c 100%)',
+  starGold: 'linear-gradient(180deg, #fff3a8 0%, #ffcf2e 50%, #f39a0c 100%)',
 }
 
 function MenuTile({ icon, label, onClick, alert, top }) {
@@ -35,12 +36,14 @@ function MenuTile({ icon, label, onClick, alert, top }) {
   )
 }
 
-/** The menu on the left, under the stats: Rebirth (with % to next), Pets, Items, Store, and the free Gift. */
+/** The menu on the left, under the stats: Rebirth (with % to next), Pets, Items, Store, the free Gift and the daily Quests. */
 export function LeftMenu() {
   const togglePanel = useGame((s) => s.togglePanel)
   const rebirthPct = useGame((s) => Math.floor(rebirthProgress(s.profile) * 100))
   const petAlert = useGame((s) => s.profile.equippedPets.length < Math.min(MAX_EQUIPPED_PETS, s.profile.pets.length))
   const itemAlert = useGame((s) => Object.values(s.profile.items).some((n) => n > 0))
+  // Today's quests done, as "1/3" (a new day shows with the next change to the profile).
+  const questsDone = useGame((s) => currentQuests(s.profile, Date.now()).filter((q) => q.done).length)
 
   return (
     <div
@@ -58,6 +61,7 @@ export function LeftMenu() {
       <MenuTile icon="items" label="Items" alert={itemAlert} onClick={() => togglePanel('items')} />
       <MenuTile icon="store" label="Store" alert onClick={() => togglePanel('store')} />
       <GiftTile />
+      <MenuTile icon="starGold" label="Quests" top={`${questsDone}/3`} onClick={() => togglePanel('quests')} />
     </div>
   )
 }
