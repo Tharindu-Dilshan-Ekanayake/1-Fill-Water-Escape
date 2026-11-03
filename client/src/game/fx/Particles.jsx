@@ -8,19 +8,24 @@ import { sharedMaterials, STYLE } from '../materials'
 import { drainBursts } from './fxQueue'
 
 /** Fixed pool: bursts reuse the oldest pieces when it's full. */
-const POOL = 160
+const POOL = 200
 const GRAVITY = 14
 
 const _m = new Matrix4()
 const _q = new Quaternion()
 const _e = new Euler()
 const _s = new Vector3()
-/** Size of one confetti piece. */
+/** Size of one confetti piece; a water droplet, before it stretches with its speed. */
 const PIECE = new Vector3(0.22, 0.22, 0.06)
+const DROP = 0.11
+const _dir = new Vector3()
+const _yAxis = new Vector3(0, 1, 0)
 
 /** Pool state. Module-level: there is one particle system, mutated every frame. */
 const pieces = Array.from({ length: POOL }, () => ({
   life: 0,
+  /** A water droplet (fxQueue `drops`) rather than confetti. */
+  drop: false,
   pos: new Vector3(),
   vel: new Vector3(),
   rot: new Vector3(),
@@ -78,11 +83,13 @@ export function Particles() {
         const index = next.current
         next.current = (next.current + 1) % POOL
         const p = pieces[index]
-        p.life = 1.2 + Math.random() * 0.8
+        p.drop = burst.drops
+        p.life = burst.drops ? 0.9 + Math.random() * 0.5 : 1.2 + Math.random() * 0.8
         p.pos.set(burst.x, burst.y, burst.z)
         const a = Math.random() * Math.PI * 2
         const speed = burst.speed * (0.5 + Math.random() * 0.7)
-        p.vel.set(Math.cos(a) * speed * 0.6, burst.speed * (0.8 + Math.random() * 0.8), Math.sin(a) * speed * 0.6)
+        const out = burst.drops ? burst.spread : 0.6
+        p.vel.set(Math.cos(a) * speed * out, burst.speed * (0.8 + Math.random() * 0.8), Math.sin(a) * speed * out)
         p.rot.set(Math.random() * 6, Math.random() * 6, Math.random() * 6)
         p.spin.set((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14)
         instanced.setColorAt(index, palette[Math.floor(Math.random() * palette.length)])
@@ -102,11 +109,19 @@ export function Particles() {
       }
       alive = true
       p.vel.y -= GRAVITY * delta
-      p.vel.multiplyScalar(1 - delta * 1.2)
+      p.vel.multiplyScalar(1 - delta * (p.drop ? 0.4 : 1.2))
       p.pos.addScaledVector(p.vel, delta)
-      p.rot.addScaledVector(p.spin, delta)
-      _q.setFromEuler(_e.set(p.rot.x, p.rot.y, p.rot.z))
-      _s.copy(PIECE).multiplyScalar(Math.min(1, p.life * 2))
+      if (p.drop) {
+        // A droplet: no spin, drawn out along the way it's flying, shrinking as it goes.
+        const v = p.vel.length()
+        _q.setFromUnitVectors(_yAxis, _dir.copy(p.vel).divideScalar(Math.max(v, 1e-3)))
+        const k = Math.min(1, p.life * 2.5)
+        _s.set(DROP * k, (DROP + v * 0.025) * k, DROP * k)
+      } else {
+        p.rot.addScaledVector(p.spin, delta)
+        _q.setFromEuler(_e.set(p.rot.x, p.rot.y, p.rot.z))
+        _s.copy(PIECE).multiplyScalar(Math.min(1, p.life * 2))
+      }
       instanced.setMatrixAt(i, _m.compose(p.pos, _q, _s))
     }
     // Nothing to draw (or particles off): skip the draw call entirely.

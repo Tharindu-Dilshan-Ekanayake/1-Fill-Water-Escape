@@ -112,23 +112,145 @@ function carrying(w) {
 }
 
 /**
- * Scooping in a well, `phase` 0..1 through one scoop (one per TRAIN_INTERVAL): bend down
- * with both arms reaching for the water, dip, and haul the full bucket back up.
+ * Hauling Water out of a well: one full "heave-ho" every SCOOP_CYCLE seconds (faster
+ * while you tap), `phase` 0..1 through it, keyframed (SCOOP_KEYS) and eased between:
+ *   0.00  the full bucket held high in the right hand, the left arm out for balance
+ *   0.18  wind-up: leaning back, the bucket swung up behind the head in both hands
+ *   0.36  the plunge: a deep bow, both arms thrust down into the well - the bucket goes
+ *         in mouth first and the water sprays up (SCOOP_SPLASH)
+ *   0.50  down in the water, filling, the arms shaking with the weight
+ *   0.70  hauled up to the chest, elbows bent
+ *   0.86  heaved up high on tiptoe, Water slopping over the rim (SCOOP_SPILL)
+ * Each key also sets how far the bucket is tipped forward (`tilt`, radians) and how full
+ * it looks (`water`, 0-1): the Water you held goes into you on the wind-up.
  */
-function scooping(phase, w) {
-  // Down quickly, a beat at the bottom, then up.
-  const dip = smooth(0, 0.3, phase) * (1 - smooth(0.55, 0.95, phase))
-  add('Spine1', -0.75 * dip, 0, 0, w)
-  add('Neck1', 0.25 * dip, 0, 0, w)
-  add('ArmR1', -0.95 * dip - 0.2, 0.08 * OUT_R, 0, w)
-  add('ArmR2', -0.25, 0, 0, w)
-  add('ArmL1', -1.05 * dip - 0.25, 0.25 * OUT_L, 0, w)
-  add('ArmL2', -0.35, 0, 0, w)
-  add('LegL1', -0.45 * dip, 0.06 * OUT_L, 0, w)
-  add('LegL2', 0.8 * dip, 0, 0, w)
-  add('LegR1', -0.45 * dip, 0.06 * OUT_R, 0, w)
-  add('LegR2', 0.8 * dip, 0, 0, w)
-  pose.lift -= 0.22 * dip * w
+export const SCOOP_CYCLE = 1.2
+export const SCOOP_SPLASH = 0.4
+export const SCOOP_SPILL = 0.84
+
+const key = (t, lift, tilt, water, b) => ({ t, lift, tilt, water, bones: b })
+const SCOOP_TROPHY = key(0, 0.03, -0.1, 1, {
+  Spine1: [0.12, 0, 0],
+  Neck1: [-0.15, 0, 0],
+  ArmR1: [-2.45, 0.22 * OUT_R, 0],
+  ArmR2: [-0.25, 0, 0],
+  ArmL1: [-0.55, 0.75 * OUT_L, 0],
+  ArmL2: [-0.35, 0, 0],
+  LegL1: [-0.08, 0.06 * OUT_L, 0],
+  LegL2: [0.1, 0, 0],
+  LegR1: [0.06, 0.06 * OUT_R, 0],
+  LegR2: [0.1, 0, 0],
+})
+const SCOOP_KEYS = [
+  SCOOP_TROPHY,
+  key(0.18, 0, -0.45, 0.3, {
+    Spine1: [0.32, 0, -0.15],
+    Neck1: [-0.3, 0, 0],
+    ArmR1: [-2.95, 0.12 * OUT_R, 0],
+    ArmR2: [-0.7, 0, 0],
+    ArmL1: [-2.7, 0.18 * OUT_L, 0],
+    ArmL2: [-0.7, 0, 0],
+    LegL1: [-0.3, 0.08 * OUT_L, 0],
+    LegL2: [0.35, 0, 0],
+    LegR1: [0.2, 0.08 * OUT_R, 0],
+    LegR2: [0.25, 0, 0],
+  }),
+  key(0.36, -0.26, 1.35, 0.25, {
+    Spine1: [-1.05, 0, 0.1],
+    Neck1: [0.4, 0, 0],
+    ArmR1: [-0.95, 0.04 * OUT_R, 0],
+    ArmR2: [-0.12, 0, 0],
+    ArmL1: [-1.05, 0.12 * OUT_L, 0],
+    ArmL2: [-0.2, 0, 0],
+    LegL1: [-0.62, 0.08 * OUT_L, 0],
+    LegL2: [1.05, 0, 0],
+    LegR1: [-0.4, 0.08 * OUT_R, 0],
+    LegR2: [0.85, 0, 0],
+  }),
+  key(0.5, -0.3, 1.0, 1, {
+    Spine1: [-1.12, 0, -0.05],
+    Neck1: [0.45, 0, 0],
+    ArmR1: [-0.78, 0.04 * OUT_R, 0],
+    ArmR2: [-0.1, 0, 0],
+    ArmL1: [-0.88, 0.12 * OUT_L, 0],
+    ArmL2: [-0.15, 0, 0],
+    LegL1: [-0.66, 0.08 * OUT_L, 0],
+    LegL2: [1.12, 0, 0],
+    LegR1: [-0.45, 0.08 * OUT_R, 0],
+    LegR2: [0.9, 0, 0],
+  }),
+  key(0.7, -0.06, 0.05, 1, {
+    Spine1: [-0.18, 0, 0],
+    Neck1: [0.05, 0, 0],
+    ArmR1: [-1.35, 0.14 * OUT_R, 0],
+    ArmR2: [-1.65, 0, 0],
+    ArmL1: [-1.25, 0.2 * OUT_L, 0],
+    ArmL2: [-1.55, 0, 0],
+    LegL1: [-0.22, 0.07 * OUT_L, 0],
+    LegL2: [0.38, 0, 0],
+    LegR1: [-0.12, 0.07 * OUT_R, 0],
+    LegR2: [0.3, 0, 0],
+  }),
+  key(0.86, 0.12, -0.2, 1, {
+    Spine1: [0.22, 0, 0],
+    Neck1: [-0.3, 0, 0],
+    ArmR1: [-2.65, 0.2 * OUT_R, 0],
+    ArmR2: [-0.15, 0, 0],
+    ArmL1: [-0.45, 1.0 * OUT_L, 0],
+    ArmL2: [-0.3, 0, 0],
+    LegL1: [-0.05, 0.05 * OUT_L, 0],
+    LegL2: [0.04, 0, 0],
+    LegR1: [0.05, 0.05 * OUT_R, 0],
+    LegR2: [0.04, 0, 0],
+  }),
+  { ...SCOOP_TROPHY, t: 1 },
+]
+
+/** The two keys `phase` lies between, and how far (eased) from the first to the second. */
+const scoopSpan = { a: SCOOP_TROPHY, b: SCOOP_TROPHY, s: 0 }
+function findSpan(phase) {
+  const x = clamp01(phase)
+  let i = 0
+  while (i < SCOOP_KEYS.length - 2 && x >= SCOOP_KEYS[i + 1].t) i += 1
+  const a = SCOOP_KEYS[i]
+  const b = SCOOP_KEYS[i + 1]
+  scoopSpan.a = a
+  scoopSpan.b = b
+  scoopSpan.s = smooth(0, 1, (x - a.t) / (b.t - a.t))
+  return scoopSpan
+}
+
+/** How far the bucket is tipped forward (radians) at `phase` of a scoop. */
+export function scoopBucketTilt(phase) {
+  const { a, b, s } = findSpan(phase)
+  return lerp(a.tilt, b.tilt, s)
+}
+
+/** How full the bucket looks (0-1) at `phase` of a scoop. */
+export function scoopWater(phase) {
+  const { a, b, s } = findSpan(phase)
+  return lerp(a.water, b.water, s)
+}
+
+/** The right arm's swing at `phase` of a scoop, for figures with no more joints than that. */
+export function scoopArm(phase) {
+  const { a, b, s } = findSpan(phase)
+  return lerp(a.bones.ArmR1[0], b.bones.ArmR1[0], s) + lerp(a.bones.Spine1[0], b.bones.Spine1[0], s)
+}
+
+function scooping(phase, time, w) {
+  const { a, b, s } = findSpan(phase)
+  for (const name in a.bones) {
+    const from = a.bones[name]
+    const to = b.bones[name]
+    add(name, lerp(from[0], to[0], s), lerp(from[1], to[1], s), lerp(from[2], to[2], s), w)
+  }
+  pose.lift += lerp(a.lift, b.lift, s) * w
+  // Down in the water, the arms shake with the weight of the filling bucket.
+  const strain = smooth(0.38, 0.44, phase) * (1 - smooth(0.52, 0.6, phase))
+  const shake = Math.sin(time * 34) * 0.07 * strain
+  add('ArmR1', shake, 0, 0, w)
+  add('ArmL1', -shake, 0, 0, w)
 }
 
 /** Pouring at a pit's rim: both arms up and out in front, tipping the bucket over. */
@@ -222,7 +344,7 @@ function cheering(time, w) {
  *   vy?: number, stride?: number, carry?: number, scoop?: number, pour?: number,
  *   swim?: number, stroke?: number, flick?: number, cheer?: number, emote?: string|null }} motion
  *   `carry` (0-1) holds the bucket in the right hand; `scoop` is how far (0-1) through a
- *   scoop in a well (below 0: not scooping); `pour` (0-1) tips the bucket out at a pit;
+ *   haul from a well (below 0: not scooping; see SCOOP_KEYS); `pour` (0-1) tips the bucket out at a pit;
  *   `swim` (0-1) is swimming, `speed` then the swimming speed and `stroke` the phase of
  *   the stroke (radians); `flick` (0-1) swings the bucket up for a tap; `cheer` (0-1)
  *   waves.
@@ -262,8 +384,7 @@ export function computePose(motion) {
   }
   const land = 1 - swim
   if (scoop >= 0 && scoop <= 1) {
-    stance(0.3 * land, time)
-    scooping(scoop, land)
+    scooping(scoop, time, land)
   } else if (grounded) {
     stance((1 - smooth(0.05, 0.4, ratio)) * land, time)
     if (ratio > 0.02) {

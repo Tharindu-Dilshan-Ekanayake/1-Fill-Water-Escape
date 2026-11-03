@@ -6,10 +6,10 @@ import { getSDK, safeCall } from './sdk'
  */
 
 /**
- * The game slug from the Boxity developer dashboard (VITE_GAME_SLUG in client/.env).
- * >>> FILL ME IN <<< while it still reads 'MY_GAME_SLUG'.
+ * The game slug on Boxity: this game's, 1-fill-water-escape (the same as its hosting
+ * id), unless VITE_GAME_SLUG (client/.env, or the deploy workflow) says otherwise.
  */
-export const GAME_SLUG = import.meta.env.VITE_GAME_SLUG || 'MY_GAME_SLUG'
+export const GAME_SLUG = import.meta.env.VITE_GAME_SLUG || '1-fill-water-escape'
 
 const GUEST_KEY = 'pp.guestId'
 

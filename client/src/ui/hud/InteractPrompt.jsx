@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from 'react'
 
-import { BUCKETS, COLLECTION_BONUS, LAST_STAGE, runSeconds, SHOP, STAR_POWER, WELLS, WORLD_PORTALS, WORLDS } from '@shared/balance'
+import { BUCKETS, COLLECTION_BONUS, LAST_STAGE, RARITIES, runSeconds, SHOP, STAR_POWER, WELLS, WORLD_PORTALS, WORLDS } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 import { bucketPower, bucketStars, isWellUnlocked, nextStarPrice, pourSeconds, reachStage, skipPrice, world2Open } from '@shared/logic'
 
@@ -9,6 +9,7 @@ import { starText } from '../../game/labels/lobbyLabels'
 import { actions } from '../../net/actions'
 import { buy } from '../../net/shop'
 import { getGame, useGame } from '../../store/game'
+import Icon from '../Icon'
 import StrokeText from '../StrokeText'
 import { ChunkyButton, Price } from './parts'
 import { GRADIENTS, u } from './style'
@@ -89,35 +90,55 @@ function pay(price, send) {
   send()
 }
 
-/** One line of a prompt box: its key, what it does, and its price if it has one. */
-function PromptRow({ keyName, label, price, run }) {
+/** Phones and tablets: no keyboard, so no key letters on the buttons. */
+const TOUCH = typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia('(pointer: coarse)').matches
+
+/**
+ * One of a stand's big buttons: what it does, its price if it has one (red, and the
+ * button grey, while you can't afford it), and on a keyboard the key that does it too.
+ */
+function StandButton({ label, price, gradient, keyName, run, disabled }) {
   const afford = useGame((s) => price === undefined || s.profile.wins >= price)
   return (
-    <button
-      type="button"
-      onClick={run}
-      className="pp-btn pointer-events-auto flex items-center text-left"
-      style={{ gap: u(12), opacity: afford ? 1 : 0.7 }}
+    <ChunkyButton
+      gradient={disabled || !afford ? GRADIENTS.greyButton : gradient}
+      onClick={disabled ? undefined : run}
+      disabled={disabled}
+      title={label}
+      radius={20}
+      border={5}
+      // As wide as its words need, sharing the row; on a narrow phone they wrap, one a row.
+      style={{ flex: '1 1 auto', height: u(104), minWidth: u(230), padding: `0 ${u(22)}`, gap: u(16), whiteSpace: 'nowrap' }}
     >
-      <span
-        className="flex shrink-0 items-center justify-center rounded-full"
-        style={{ width: u(50), height: u(50), border: `${u(3)} solid #fff`, fontSize: u(24) }}
-      >
-        {keyName}
+      <span className="relative whitespace-nowrap" style={{ fontSize: u(46) }}>
+        <StrokeText stroke={u(10)}>{label}</StrokeText>
       </span>
-      <span style={{ fontSize: u(28) }}>{label}</span>
-      {price !== undefined && <Price amount={price} size={30} afford={afford} />}
-    </button>
+      {price !== undefined && (
+        <span className="relative">
+          <Price amount={price} size={40} afford={afford} />
+        </span>
+      )}
+      {!TOUCH && keyName && (
+        <span
+          className="absolute flex items-center justify-center rounded-full"
+          style={{ top: u(-16), right: u(-12), width: u(40), height: u(40), fontSize: u(22), background: '#111', border: `${u(3)} solid #fff`, color: '#fff' }}
+        >
+          {keyName}
+        </span>
+      )}
+    </ChunkyButton>
   )
 }
 
 /**
- * A bucket stand: buy it (any bucket, in any order), put it on, and upgrade it with
- * stars - each a bit more Water a scoop. E does what you'd most want next; F upgrades a
- * bucket you own but aren't carrying.
+ * A bucket stand: a card in the middle of the screen, over the Water bar, with big
+ * buttons a thumb can't miss - Buy (any bucket, in any order), Equip, and Upgrade with
+ * stars, each a bit more Water a scoop. On a keyboard E does what you'd most want next
+ * and F upgrades a bucket you own but aren't carrying.
  */
 function StandPrompt({ index }) {
   const bucket = BUCKETS[index]
+  const rarity = RARITIES[bucket.rarity]
   const owned = useGame((s) => s.profile.ownedBuckets.includes(bucket.id))
   const equipped = useGame((s) => s.profile.equippedBucket === bucket.id)
   const stars = useGame((s) => bucketStars(s.profile, bucket.id))
@@ -130,42 +151,74 @@ function StandPrompt({ index }) {
   const equipRun = useCallback(() => actions.equipBucket(bucket.id), [bucket])
   const starRun = useCallback(() => pay(star, () => actions.upgradeBucket(bucket.id)), [bucket, star])
 
-  const rows = []
-  if (!owned) rows.push({ keyName: 'E', label: 'Buy', price: bucket.cost, run: buyRun })
-  else if (!equipped) rows.push({ keyName: 'E', label: 'Equip', run: equipRun })
-  if (owned && star !== null) rows.push({ keyName: rows.length ? 'F' : 'E', label: `Upgrade to ★${stars + 1}`, price: star, run: starRun })
-  useKeyE(rows[0]?.run ?? null)
-  useKeyE(rows[1]?.run ?? null, 'KeyF')
+  const buttons = []
+  if (!owned) buttons.push({ label: 'BUY', price: bucket.cost, gradient: GRADIENTS.greenButton, run: buyRun })
+  else if (!equipped) buttons.push({ label: 'EQUIP', gradient: GRADIENTS.blueButton, run: equipRun })
+  if (owned && star !== null) buttons.push({ label: `\u2605 UPGRADE`, price: star, gradient: GRADIENTS.goldButton, run: starRun })
+  if (owned && equipped && star === null) buttons.push({ label: '\u2605 MAX', gradient: GRADIENTS.goldButton, disabled: true })
+  buttons.forEach((b, i) => {
+    if (!b.disabled) b.keyName = i === 0 ? 'E' : 'F'
+  })
+  useKeyE(buttons[0]?.disabled ? null : (buttons[0]?.run ?? null))
+  useKeyE(buttons[1]?.run ?? null, 'KeyF')
 
-  let note
   const collection = `+${Math.round(COLLECTION_BONUS * 100)}% Water for your collection`
-  if (!owned) note = power < carried ? `Weaker than your ${carriedName}, but ${collection}` : `+${formatNumber(power)} Water a scoop, ${collection}`
-  else note = star === null ? 'Every star - fully upgraded!' : `Each star: +${Math.round((STAR_POWER - 1) * 1000) / 10}% Water a scoop`
+  let note
+  if (!owned) note = power < carried ? `Weaker than your ${carriedName}, but ${collection}` : collection
+  else if (star === null) note = 'Every star - fully upgraded!'
+  else note = `Next star: +${Math.round((STAR_POWER - 1) * 1000) / 10}% Water a scoop`
+
   return (
     <div
-      className="pointer-events-none absolute flex flex-col text-white"
+      className="pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center"
       style={{
-        left: '53%',
-        top: '46%',
+        // Over the Water bar, where the Skip pad's button goes; on a tall phone screen
+        // higher still, clear of the jump button.
+        bottom: `max(${u(330)}, 31vh)`,
+        width: u(760),
+        maxWidth: '92vw',
         gap: u(10),
-        padding: `${u(12)} ${u(20)} ${u(14)} ${u(14)}`,
-        borderRadius: u(10),
-        background: 'rgba(24, 26, 30, 0.78)',
-        fontFamily: 'system-ui, sans-serif',
-        fontWeight: 600,
+        padding: `${u(14)} ${u(18)} ${u(18)}`,
+        borderRadius: u(18),
+        border: `${u(5)} solid #111`,
+        borderTop: `${u(9)} solid ${rarity.color}`,
+        background: 'linear-gradient(180deg, rgba(30, 33, 38, 0.92), rgba(18, 20, 24, 0.92))',
+        boxShadow: `0 ${u(6)} 0 rgba(0,0,0,0.35)`,
       }}
     >
-      <span className="flex flex-col leading-tight">
+      <div className="flex flex-wrap items-baseline justify-center" style={{ gap: `0 ${u(14)}` }}>
         <span style={{ fontSize: u(26) }}>
-          {bucket.name}
-          {owned && <span style={{ color: '#ffd21f' }}>{`  ★ ${starText(index, stars)}`}</span>}
+          <StrokeText stroke={u(6)} fill={rarity.color}>
+            {rarity.name.toUpperCase()}
+          </StrokeText>
         </span>
-        <span style={{ fontSize: u(20), opacity: 0.75 }}>{owned ? `+${formatNumber(power)} Water a scoop${equipped ? ' - Equipped' : ''}` : note}</span>
-        {owned && <span style={{ fontSize: u(18), opacity: 0.6 }}>{note}</span>}
+        <span style={{ fontSize: u(48) }}>
+          <StrokeText stroke={u(10)}>{bucket.name}</StrokeText>
+        </span>
+        {owned && (
+          <span style={{ fontSize: u(36) }}>
+            <StrokeText stroke={u(8)} gradient={GRADIENTS.gold}>
+              {`\u2605 ${starText(index, stars)}`}
+            </StrokeText>
+          </span>
+        )}
+      </div>
+      <span className="flex items-center" style={{ gap: u(6), fontSize: u(36) }}>
+        <Icon name="drop" size={u(40)} />
+        <StrokeText stroke={u(8)} fill="#7fe2ff">
+          +{formatNumber(power)} Water a scoop{equipped ? ' \u00b7 Equipped' : ''}
+        </StrokeText>
       </span>
-      {rows.map((row) => (
-        <PromptRow key={row.label} {...row} />
-      ))}
+      <span className="text-center" style={{ fontSize: u(24), lineHeight: 1.15 }}>
+        <StrokeText stroke={u(5)} style={{ whiteSpace: 'normal' }}>
+          {note}
+        </StrokeText>
+      </span>
+      <div className="flex w-full flex-wrap justify-center" style={{ gap: u(14), marginTop: u(4) }}>
+        {buttons.map((b) => (
+          <StandButton key={b.label} {...b} />
+        ))}
+      </div>
     </div>
   )
 }

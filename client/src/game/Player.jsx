@@ -2,7 +2,6 @@ import { useFrame } from '@react-three/fiber'
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { DoubleSide, Mesh, MeshBasicMaterial, Quaternion, RingGeometry, Vector3 } from 'three'
 
-import { TRAIN_INTERVAL } from '@shared/balance'
 import { isWellUnlocked } from '@shared/logic'
 import { clampToWalkable, COURSE_START_Z, courseFloorAt, groundHeightAt, STATIC_COLLIDERS, SWIM_DEPTH, WELL_STAND, WELL_X, wellAt, wellCenterZ } from '@shared/world'
 
@@ -14,9 +13,10 @@ import { pits } from './course/pits'
 import FallbackAvatar from './FallbackAvatar'
 import { burst } from './fx/fxQueue'
 import PlayerAvatar from './PlayerAvatar'
-import { swimLift, swimTilt } from './playerPose'
+import { SCOOP_CYCLE, SCOOP_SPILL, SCOOP_SPLASH, scoopBucketTilt, scoopWater, swimLift, swimTilt } from './playerPose'
 import { runtime } from './runtime'
 import useKeyboard from './useKeyboard'
+import { WELL_WATER_Y } from './world/structures'
 
 export const PLAYER_HEIGHT = 1.8
 const RADIUS = 0.45
@@ -39,6 +39,9 @@ const POUR_TILT = 1.95
 /** A tap's quick flick of the bucket, in seconds. */
 const FLICK = 0.28
 /** Ripples spreading round a swimmer: how many at once, and how long each lasts. */
+/** Each tap at a well quickens the haul by this much (up to TAP_BOOST_MAX times faster), easing off when you stop. */
+const TAP_BOOST = 0.35
+const TAP_BOOST_MAX = 2
 const RIPPLES = 2
 const RIPPLE_LIFE = 1.1
 
@@ -114,7 +117,19 @@ function pushOut(pos, rect) {
 export function Player({ onAvatarReady }) {
   const groupRef = useRef(null)
   const visualRef = useRef(null)
-  /** Moved onto the avatar's right palm every frame (PlayerAvatar / FallbackAvatar). */
+  /**
+ * Water thrown up out of well `well`, on the side of it `pos` stands: `count` droplets
+ * flung up `speed`, out `spread` times that.
+ */
+function wellSpray(well, pos, count, speed, spread) {
+  const cz = wellCenterZ(well)
+  const dx = pos.x - WELL_X
+  const dz = pos.z - cz
+  const d = Math.max(1e-3, Math.hypot(dx, dz))
+  burst({ x: WELL_X + (dx / d) * 0.45, y: WELL_WATER_Y + 0.05, z: cz + (dz / d) * 0.45, count, speed, palette: 'water', drops: true, spread })
+}
+
+/** Moved onto the avatar's right palm every frame (PlayerAvatar / FallbackAvatar). */
   const handRef = useRef(null)
   const holderRef = useRef(null)
   const keys = useKeyboard()
@@ -124,8 +139,11 @@ export function Player({ onAvatarReady }) {
   const pour = useRef(0)
   const swim = useRef(0)
   const wasSwimming = useRef(false)
-  /** How far through the current scoop. */
+  /** How far through the current haul from a well (playerPose SCOOP_KEYS). */
   const scoopAt = useRef(0)
+  /** How much faster the haul runs for your tapping, and the last tap seen. */
+  const tapBoost = useRef(0)
+  const lastTap = useRef(0)
   /** Eased 0-1: stepping up to a well's edge to scoop. */
   const atWell = useRef(0)
   /** The crawl's half-strokes so far, for a splash at each hand's entry. */
@@ -289,16 +307,29 @@ export function Player({ onAvatarReady }) {
     const pouring = Boolean(player.pourAt) && !nowSwimming
     pour.current = pouring ? Math.min(1, pour.current + delta * 5) : Math.max(0, pour.current - delta * 4)
     if (scooping) {
-      const before = scoopAt.current
-      scoopAt.current = (scoopAt.current + delta / TRAIN_INTERVAL) % 1
-      // The bucket hits the water in the well at the bottom of each dip.
-      if (before < 0.4 && scoopAt.current >= 0.4) {
-        sfx.scoop()
-        burst({ x: WELL_X, y: pos.y + 0.75, z: wellCenterZ(well), count: 6, speed: 3.5, palette: 'water' })
+      // A tap at the well throws Water up out of it, and quickens the haul.
+      if (player.tappedAt !== lastTap.current) {
+        lastTap.current = player.tappedAt
+        tapBoost.current = Math.min(TAP_BOOST_MAX, tapBoost.current + TAP_BOOST)
+        wellSpray(well, pos, 10, 5.5, 0.45)
       }
+      const before = scoopAt.current
+      scoopAt.current = (before + (delta / SCOOP_CYCLE) * (1 + tapBoost.current)) % 1
+      const wrapped = scoopAt.current < before
+      const reached = (mark) => before < mark && (scoopAt.current >= mark || wrapped)
+      // The plunge: the bucket goes in and the water sprays up high, and splashes round.
+      if (reached(SCOOP_SPLASH)) {
+        sfx.scoop()
+        wellSpray(well, pos, 18, 7.5, 0.3)
+        wellSpray(well, pos, 8, 3, 1.1)
+      }
+      // Heaved up high: Water slopping over the rim.
+      if (reached(SCOOP_SPILL)) burst({ x: player.bucketLip.x, y: player.bucketLip.y, z: player.bucketLip.z, count: 7, speed: 2.5, palette: 'water', drops: true, spread: 0.9 })
     } else {
       scoopAt.current = 0
+      lastTap.current = player.tappedAt
     }
+    tapBoost.current = Math.max(0, tapBoost.current - delta * 1.2)
     const swimRatio = Math.min(1, speed / SWIM_SPEED)
     if (nowSwimming) {
       // The crawl: a splash where each hand goes in, and a stroke's wash of sound.
@@ -368,13 +399,16 @@ export function Player({ onAvatarReady }) {
       // Swimming, it's out of sight under the water.
       holder.visible = swim.current < 0.3
       bucket.setBucket(profile.equippedBucket)
-      // Brimming once you've scooped some, emptying as you pour.
-      bucket.setWater(profile.water > 0 ? 1 - pour.current * 0.85 : 0.15)
+      // Brimming once you've scooped some, emptying as you pour; at a well, as the haul goes.
+      if (scooping) bucket.setWater(scoopWater(scoopAt.current))
+      else bucket.setWater(profile.water > 0 ? 1 - pour.current * 0.85 : 0.15)
       holder.position.copy(hand.position)
       holder.position.z += POUR_REACH * pour.current
       holder.position.y += POUR_LIFT * pour.current
       const sway = Math.sin(motion.stride) * 0.12 * Math.min(1, speed / WALK_SPEED) * (1 - pour.current)
-      holder.quaternion.setFromAxisAngle(_xAxis, pour.current * POUR_TILT + sway)
+      // Tipped forward to pour, and at a well into the water mouth first and back up.
+      const scoopTilt = scooping ? scoopBucketTilt(scoopAt.current) * atWell.current : 0
+      holder.quaternion.setFromAxisAngle(_xAxis, pour.current * POUR_TILT + sway + scoopTilt)
       holder.updateMatrixWorld()
       holder.localToWorld(player.bucketLip.copy(LIP))
     }
@@ -393,7 +427,8 @@ export function Player({ onAvatarReady }) {
     motion.swim = swim.current
     // A tap's flick of the bucket, eased in and out.
     const sinceTap = (performance.now() - player.tappedAt) / 1000
-    motion.flick = sinceTap >= 0 && sinceTap < FLICK ? Math.sin((sinceTap / FLICK) * Math.PI) : 0
+    // (At a well a tap quickens the haul instead.)
+    motion.flick = !scooping && sinceTap >= 0 && sinceTap < FLICK ? Math.sin((sinceTap / FLICK) * Math.PI) : 0
     // Steps quicken with speed: the stride phase runs faster rather than jumping.
     motion.stride += delta * (5 + 6 * Math.min(1, shownSpeed / topSpeed))
   })

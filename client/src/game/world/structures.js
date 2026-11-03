@@ -40,6 +40,8 @@ const PAIL = new CylinderGeometry(0.22, 0.17, 0.3, 12)
 /** The well's wall: its centre line's radius, its middle's height over the basin, half its height. */
 const WALL_R = 1
 const WALL_MID = 0.42
+/** Height of the water inside every well, where scoops splash. */
+export const WELL_WATER_Y = WELL_HEIGHT + WALL_MID + 0.16
 /** The frame: posts this far out either side, the windlass between them, the roof's ridge. */
 const POST_X = 1.45
 const WINDLASS_Y = WELL_HEIGHT + 1.75

@@ -2,7 +2,6 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { Quaternion, Vector3 } from 'three'
 
-import { TRAIN_INTERVAL } from '@shared/balance'
 import { SWIM_DEPTH, WELL_X, wellAt, wellCenterZ } from '@shared/world'
 
 import { emoteFromAnim } from '../../bloxity/emotes'
@@ -62,7 +61,8 @@ function RemoteAvatar({ sessionId, look }) {
     m.maxSpeed = swimming ? SWIM_SPEED : MAX_SPEED
     if (swimming) m.stroke += delta * (2.4 + 3.6 * ratio)
     m.grounded = r.anim !== 'jump'
-    m.scoop = scooping ? (m.time / TRAIN_INTERVAL) % 1 : -1
+    // The haul's phase, kept per player by RemotePlayers so the splash lands on the plunge.
+    m.scoop = scooping ? Math.max(0, r.scoopPhase ?? 0) : -1
     m.swim = swimming ? Math.min(1, m.swim + delta * 6) : Math.max(0, m.swim - delta * 6)
     // A Boxity emote they're playing (stood still while it lasts).
     m.emote = emoteFromAnim(r.anim)

@@ -2,7 +2,6 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, Matrix4, Quaternion, Vector3 } from 'three'
 
-import { TRAIN_INTERVAL } from '@shared/balance'
 import { SWIM_DEPTH, WELL_X, wellAt, wellCenterZ } from '@shared/world'
 
 import { remotePlayers } from '../../net/remotePlayers'
@@ -11,8 +10,10 @@ import { createBoxInstances, disposeBlocks } from '../blocks'
 import { BUCKET_GRIP, bucketMatrix, createBucketMesh, disposeBucketMesh } from '../bucket'
 import { sharedMaterials, STYLE } from '../materials'
 import { BUCKET_SIZE } from '../Player'
-import { swimLift, swimTilt } from '../playerPose'
+import { burst } from '../fx/fxQueue'
+import { SCOOP_CYCLE, SCOOP_SPLASH, scoopArm, swimLift, swimTilt } from '../playerPose'
 import { runtime } from '../runtime'
+import { WELL_WATER_Y } from '../world/structures'
 import { hideNameplatesFrom, NAMEPLATE_POOL_SIZE, placeNameplate } from './nameplates'
 
 /** Remote players are drawn this far in the past, so 10 Hz updates interpolate. */
@@ -22,6 +23,8 @@ const PARTS = 6
 const S = 0.36
 /** Swimming speed, for how flat a swimmer lies. */
 const SWIM_SPEED = 8
+/** Others' scoops splash only this close to you (the particle pool is shared). */
+const SPLASH_DISTANCE = 30
 const _tilt = new Quaternion()
 const _tilt2 = new Quaternion()
 const _xAxis = new Vector3(1, 0, 0)
@@ -186,8 +189,26 @@ export function RemotePlayers() {
       r.shadow.visible = visible
       const scooping = r.anim === 'scoop'
       const swimming = r.anim === 'swim'
-      // Scooping they face their well.
+      // Scooping they face their well, hauling Water out of it (playerPose SCOOP_KEYS):
+      // one phase per player, which their full avatar (RemoteAvatars) follows too.
       const well = scooping ? wellAt(r.position.x, r.position.z, 1) : -1
+      const before = r.scoopPhase ?? -1
+      r.scoopPhase = scooping ? (Math.max(0, before) + delta / SCOOP_CYCLE) % 1 : -1
+      // Their plunge splashes too, close enough to see.
+      if (well >= 0 && distance < SPLASH_DISTANCE && before >= 0 && before < SCOOP_SPLASH && (r.scoopPhase >= SCOOP_SPLASH || r.scoopPhase < before)) {
+        const cz = wellCenterZ(well)
+        const d = Math.max(1e-3, Math.hypot(r.position.x - WELL_X, r.position.z - cz))
+        burst({
+          x: WELL_X + ((r.position.x - WELL_X) / d) * 0.45,
+          y: WELL_WATER_Y + 0.05,
+          z: cz + ((r.position.z - cz) / d) * 0.45,
+          count: 12,
+          speed: 7,
+          palette: 'water',
+          drops: true,
+          spread: 0.35,
+        })
+      }
       const yaw = well >= 0 ? Math.atan2(WELL_X - r.position.x, wellCenterZ(well) - r.position.z) : r.yaw
       _q.setFromAxisAngle(_up, yaw)
 
@@ -199,9 +220,8 @@ export function RemotePlayers() {
         const walking = !scooping && r.speed > 0.6
         if (walking) r.walkPhase += delta * (swimming ? 4 : 6 + Math.min(r.speed, 10) * 0.5)
         const swing = walking ? Math.sin(r.walkPhase) * 0.9 : 0
-        // Scooping: both arms dip down in front; swimming: they reach and pull.
-        const dip = scooping ? Math.sin(((t / TRAIN_INTERVAL) % 1) * Math.PI) : 0
-        const armSwing = scooping ? -0.4 - 0.8 * dip : swimming ? -2.4 + Math.sin(r.walkPhase) * 1.2 : null
+        // Scooping: the arms follow the haul's swing; swimming: they reach and pull.
+        const armSwing = scooping ? scoopArm(r.scoopPhase) : swimming ? -2.4 + Math.sin(r.walkPhase) * 1.2 : null
         // Swimming, lying down flat on the water like everyone's real avatar does.
         const tilt = swimming ? swimTilt(1, Math.min(1, r.speed / SWIM_SPEED)) : 0
         swimLift(tilt, SWIM_DEPTH, _lift)
