@@ -14,19 +14,21 @@ export const PlayerState = schema(
     y: t.float32(),
     z: t.float32(),
     rotY: t.float32(),
-    /** 'idle' | 'walk' | 'run' (training on a pad) | 'jump' | 'emote:<Boxity emote id>' */
+    /** 'idle' | 'walk' | 'scoop' (training in a well) | 'jump' | 'swim' | 'emote:<Boxity emote id>' */
     anim: t.string(),
     /** What their Bloxity avatar wears, as JSON `{ equipped, proportions }` ('' = base). */
     look: t.string(),
-    tireId: t.string(),
+    bucketId: t.string(),
     /** Equipped pet species, at most 3. */
     petIds: t.array('string'),
-    health: t.float64(),
+    water: t.float64(),
     wins: t.float64(),
     rebirths: t.uint16(),
     /** The world they're in (balance WORLDS): players only see others in theirs. */
     world: t.uint8(),
     level: t.uint16(),
+    /** Furthest stage reached, for their name tag (logic.overallStage: past 59 is World 2). */
+    best: t.uint16(),
   },
   'PlayerState',
 )

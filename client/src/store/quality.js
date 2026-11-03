@@ -17,9 +17,6 @@ export const PRESETS = {
     shadows: 'blob',
     shadowMapSize: 0,
     particles: false,
-    speedLines: true,
-    /** Motion blur down the sides at speed (post-processing): samples a pixel, 0 = off. */
-    motionBlur: 0,
     viewDistance: 190,
     fogNear: 60,
     cloudCount: 8,
@@ -30,7 +27,7 @@ export const PRESETS = {
      * `remoteAvatars` of them within `remoteAvatarDistance` as their real Boxity avatar
      * (anyone else as the blocky figure). On every preset that's everyone: a room holds
      * 8, and a Boxity avatar is ~100 triangles and one draw call (plus one per worn
-     * item), so the 7 others cost less than one tire.
+     * item), so the 7 others cost less than the lobby's labels.
      */
     remoteDrawDistance: 150,
     remoteAvatars: 7,
@@ -38,7 +35,7 @@ export const PRESETS = {
     remoteNameDistance: 40,
     /** World labels fade out past this. */
     labelDistance: 70,
-    /** How much of the canyon's scenery to spawn (0-1). */
+    /** How much of the course's scenery to spawn (0-1). */
     decorDensity: 0.45,
     /** Board and egg halo size multiplier. */
     boardGlow: 0.8,
@@ -49,8 +46,6 @@ export const PRESETS = {
     shadows: 'blob',
     shadowMapSize: 0,
     particles: true,
-    speedLines: true,
-    motionBlur: 8,
     viewDistance: 300,
     fogNear: 100,
     cloudCount: 14,
@@ -69,8 +64,6 @@ export const PRESETS = {
     shadows: 'realtime',
     shadowMapSize: 1024,
     particles: true,
-    speedLines: true,
-    motionBlur: 12,
     viewDistance: 460,
     fogNear: 140,
     cloudCount: 18,
@@ -122,7 +115,7 @@ export const useQuality = create((set, get) => ({
   settings: PRESETS[initialLevel],
   /**
    * Bumped when the player picks a new level by hand: the 3D view is rebuilt from
-   * scratch, so things set when it's made (antialiasing, scenery density, tire detail)
+   * scratch, so things set when it's made (antialiasing, scenery density, bucket detail)
    * take the new level at once.
    */
   rebuild: 0,

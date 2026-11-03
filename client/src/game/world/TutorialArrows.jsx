@@ -2,8 +2,8 @@ import { useFrame } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Matrix4, Quaternion, Vector3 } from 'three'
 
-import { TUTORIAL } from '@shared/balance'
-import { EGG_STANDS, groundHeightAt, PAD_RADIUS, PAD_X, padCenterZ, ROLL_ZONE, TIRE_STANDS } from '@shared/world'
+import { BUCKETS, TUTORIAL } from '@shared/balance'
+import { BUCKET_STANDS, COURSE_START_Z, EGG_STANDS, groundHeightAt, START_LINE, WELL_RADIUS, WELL_X, wellCenterZ } from '@shared/world'
 
 import { getGame } from '../../store/game'
 import { createToyInstances, PropBuilder } from '../blocks'
@@ -17,10 +17,20 @@ const ARRIVED = 3.5
 
 /** Ground point each tutorial step leads to. */
 const TARGETS = {
-  roll: { x: 0, z: (ROLL_ZONE.minZ + ROLL_ZONE.maxZ) / 2 },
-  pad0: { x: PAD_X, z: padCenterZ(0), reach: PAD_RADIUS - 0.5 },
-  tires: { x: TIRE_STANDS[1].x, z: TIRE_STANDS[1].z },
+  // Out to the start line; on the course itself the pits show the way.
+  course: { x: 0, z: (START_LINE.minZ + START_LINE.maxZ) / 2, lobbyOnly: true },
+  well0: { x: WELL_X, z: wellCenterZ(0), reach: WELL_RADIUS - 0.5 },
   eggs: { x: EGG_STANDS[0].x, z: EGG_STANDS[0].z - 3.5 },
+}
+
+/** The stand of the next bucket you can buy (the Beach Bucket's if you own them all). */
+const nextStand = { x: 0, z: 0 }
+function bucketTarget(profile) {
+  const index = BUCKETS.findIndex((b) => !profile.ownedBuckets.includes(b.id))
+  const stand = BUCKET_STANDS[index > 0 ? index : 1]
+  nextStand.x = stand.x
+  nextStand.z = stand.z
+  return nextStand
 }
 
 const _m = new Matrix4()
@@ -60,11 +70,11 @@ export function TutorialArrows() {
   useFrame((state) => {
     const instanced = ref.current
     if (!instanced) return
-    const { profile, roll } = getGame()
+    const { profile } = getGame()
     const step = TUTORIAL[profile.tutorialStep]
-    const target = step && TARGETS[step.target]
+    const target = step && (step.target === 'buckets' ? bucketTarget(profile) : TARGETS[step.target])
     const player = runtime.player.position
-    if (!target || roll || runtime.camera.mode !== 'follow') {
+    if (!target || runtime.camera.mode !== 'follow' || (target.lobbyOnly && player.z < COURSE_START_Z)) {
       instanced.count = 0
       return
     }
@@ -84,7 +94,7 @@ export function TutorialArrows() {
     for (let d = 1.6 + offset; d < dist - 1 && count < MAX_CHEVRONS; d += SPACING) {
       const x = player.x + ux * d
       const z = player.z + uz * d
-      // Over the pads and showroom stages, not under them.
+      // Over the wells and shop stages, not under them.
       _p.set(x, groundHeightAt(x, z) + 0.06, z)
       // Fade in near the player, shrink near the goal.
       const scale = Math.min(1, (d - 1.2) / 1.5) * Math.min(1, (dist - d) / 2)

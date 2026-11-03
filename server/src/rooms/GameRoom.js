@@ -1,12 +1,12 @@
 import { Room } from '@colyseus/core'
 
-import { AD_REWARDS } from '../../../shared/balance.js'
-import { applyOfflineProgress } from '../../../shared/logic.js'
+import { AD_REWARDS, ITEMS, LAST_STAGE } from '../../../shared/balance.js'
+import { applyOfflineProgress, applyWeeklyReward, overallStage, weekOf, winsInWeek } from '../../../shared/logic.js'
 import { PlayerSession } from '../../../shared/session.js'
-import { clampToWalkable, isRollReturn, MAX_MOVE_SPEED, SPAWN } from '../../../shared/world.js'
+import { atPitRim, clampToWalkable, COURSE_START_Z, courseLimitZ, MAX_MOVE_SPEED, PIT_DEPTH, SPAWN } from '../../../shared/world.js'
 import { resolveIdentity, verifyAdReward } from '../bloxityApi.js'
 import { reportLeaver } from '../bloxityLeaderboards.js'
-import { carryOverGuest, getSphinxStock, loadProfile, saveProfile, takeSphinx } from '../db.js'
+import { carryOverGuest, getSphinxStock, loadProfile, saveProfile, takeSphinx, weeklyRank } from '../db.js'
 import { applyGemsForSession } from '../gems.js'
 import { getLeaderboards } from '../leaderboards.js'
 import { activePlayers, broadcastAll, liveRooms } from '../registry.js'
@@ -26,7 +26,9 @@ const DUPLICATE_LOGIN = 4100
 const POD = process.env.POD_NAME || `local-${process.pid}`
 
 /** What other players may be told someone is doing. */
-const ANIMS = ['idle', 'walk', 'run', 'jump']
+const ANIMS = ['idle', 'walk', 'scoop', 'jump', 'swim']
+/** How far past a closed pit's rim a position may stray (lag) before it's pulled back. */
+const RIM_SLACK = 1.5
 /** A Boxity emote, replicated through `anim` as 'emote:<its 24-hex id>'. */
 const EMOTE_ANIM = /^emote:[a-f0-9]{24}$/
 /** Least time between two 'gemsCheck's from one player (each is a database query). */
@@ -132,36 +134,35 @@ export class GameRoom extends Room {
       now,
       emit: (type, payload) => client.send(type, payload),
       getPosition: () => player,
+      // Others helped fill it: a tip for each of them.
+      onPitFilled: (stage) => {
+        const member = this.members.get(client.sessionId)
+        if (!member) return
+        for (const helper of this.helpersAt(member, stage)) helper.session.coopTip(stage, name)
+      },
       onPurchase: (productId) => {
         if (productId !== 'sphinx') return true
         const ok = takeSphinx()
         if (ok) broadcastAll('stock', { sphinx: getSphinxStock() })
         return ok
       },
-      onRoll: (result) => {
-        // Everyone else watches it as a ghost tire. Excluded by session id, not by the
-        // client object from the join: after a reconnect that object is stale, and the
-        // roller would get their own roll back as a second tire.
-        const self = this.clients.find((c) => c.sessionId === client.sessionId)
-        this.broadcast(
-          'ghostRoll',
-          {
-            sid: client.sessionId,
-            distance: result.distance,
-            duration: result.duration,
-            blocked: result.blocked,
-            tireId: profile.equippedTire,
-            world: profile.world,
-            x: player.x,
-            z: player.z,
-          },
-          self ? { except: self } : undefined,
-        )
+      // Back to the lobby after a claim (or a rebirth out on the course): the room takes
+      // the jump as the player's new position and moves their client there. Looked up by
+      // session id, as after a reconnect the client object from the join is stale.
+      onTeleport: (to) => {
+        const member = this.members.get(client.sessionId)
+        if (member) {
+          member.lastPos = { x: to.x, z: to.z }
+          member.lastPosAt = Date.now()
+        }
+        Object.assign(player, { x: to.x, y: 0, z: to.z })
+        this.clients.find((c) => c.sessionId === client.sessionId)?.send('teleport', { x: to.x, y: 0, z: to.z })
       },
     })
 
     this.members.set(client.sessionId, { session, playerId, verified, owner, lastPos: { x: spawnX, z: spawnZ }, lastPosAt: now })
     activePlayers.set(playerId, { room: this, client })
+    await this.weeklyReward(session, now)
 
     session.sendProfile()
     client.send('spawn', { x: spawnX, z: spawnZ })
@@ -174,12 +175,32 @@ export class GameRoom extends Room {
     applyGemsForSession(this, client.sessionId)
   }
 
+  /**
+   * Last week's board: if this player made its top 10, their reward - once, the first
+   * time they're back after the week turned.
+   */
+  async weeklyReward(session, now) {
+    const profile = session.profile
+    const week = weekOf(now) - 1
+    const wins = winsInWeek(profile, week)
+    if (wins <= 0 || profile.weekly.rewarded >= week) return
+    try {
+      const rank = await weeklyRank(week, wins)
+      const reward = applyWeeklyReward(profile, week, rank)
+      if (!reward) return
+      session.dirty = true
+      session.emit('reward', { label: `LAST WEEK'S BOARD: #${rank}! ${reward.amount} ${ITEMS[reward.item].name}s in Items` })
+    } catch (err) {
+      console.error('[room] weekly reward check failed', err)
+    }
+  }
+
   /** Dropped without saying goodbye (mobile network blip): hold the seat. */
   async onDrop(client) {
     const member = this.members.get(client.sessionId)
     if (!member || member.kicked) return
     // Stop training while away; the seat stays warm for the reconnect.
-    member.session.handle('leavePad', {}, Date.now())
+    member.session.handle('leaveWell', {}, Date.now())
     member.reconnection = this.allowReconnection(client, RECONNECT_SECONDS)
     try {
       await member.reconnection
@@ -270,12 +291,14 @@ export class GameRoom extends Room {
     const player = this.state.players.get(sessionId)
     if (!member || !player) return
     const p = member.session.profile
-    if (player.health !== p.health) player.health = p.health
+    if (player.water !== p.water) player.water = p.water
     if (player.wins !== p.wins) player.wins = p.wins
     if (player.rebirths !== p.rebirths) player.rebirths = p.rebirths
     if (player.level !== p.level) player.level = p.level
-    if (player.tireId !== p.equippedTire) player.tireId = p.equippedTire
+    if (player.bucketId !== p.equippedBucket) player.bucketId = p.equippedBucket
     if (player.world !== p.world) player.world = p.world
+    const best = overallStage(p.stats)
+    if (player.best !== best) player.best = best
     const pets = p.equippedPets
       .map((uid) => p.pets.find((pet) => pet.uid === uid)?.id)
       .filter(Boolean)
@@ -287,7 +310,7 @@ export class GameRoom extends Room {
 
   /**
    * Position reports, ~10 Hz from each client. Accepted if the move is physically
-   * possible since the last accepted one (or is the hop back after a roll);
+   * possible since the last accepted one and doesn't cross a pit the player can't fill;
    * otherwise the client is snapped back.
    */
   handlePosition(client, msg) {
@@ -302,7 +325,9 @@ export class GameRoom extends Room {
     const now = Date.now()
     const dt = Math.max(0.05, (now - member.lastPosAt) / 1000)
     const dist = Math.hypot(x - member.lastPos.x, z - member.lastPos.z)
-    if (dist > MAX_MOVE_SPEED * dt + MOVE_SLACK && !isRollReturn(member.lastPos, { x, z })) {
+    // North of the first pit they haven't filled this run is out of bounds.
+    const beyond = z < courseLimitZ(member.session.run.open) - RIM_SLACK
+    if (beyond || dist > MAX_MOVE_SPEED * dt + MOVE_SLACK) {
       client.send('correct', { x: member.lastPos.x, y: player.y, z: member.lastPos.z })
       return
     }
@@ -310,7 +335,8 @@ export class GameRoom extends Room {
     member.lastPos = clamped
     member.lastPosAt = now
     player.x = clamped.x
-    player.y = Math.max(0, Math.min(y, 6))
+    // Out on the course, swimmers sit low in the pits.
+    player.y = Math.max(clamped.z < COURSE_START_Z ? -PIT_DEPTH : 0, Math.min(y, 6))
     player.z = clamped.z
     player.rotY = Number(msg.r) || 0
     player.anim = ANIMS.includes(msg.a) || (typeof msg.a === 'string' && EMOTE_ANIM.test(msg.a)) ? msg.a : 'idle'
@@ -375,9 +401,27 @@ export class GameRoom extends Room {
 
   tick(dt) {
     const now = Date.now()
+    for (const member of this.members.values()) member.session.helpers = this.helpersAt(member, member.session.run.open + 1).length
     for (const [sessionId, member] of this.members) {
       member.session.tick(dt, now)
       this.syncPlayer(sessionId)
     }
+  }
+
+  /**
+   * Who's pouring pit `stage` with `member`: everyone else in their world at its rim.
+   * (Empty when `member` isn't at it.)
+   */
+  helpersAt(member, stage) {
+    const me = member.session.getPosition()
+    if (stage > LAST_STAGE || !atPitRim(stage, me.x, me.z)) return []
+    const world = member.session.profile.world
+    const out = []
+    for (const other of this.members.values()) {
+      if (other === member || other.session.profile.world !== world) continue
+      const them = other.session.getPosition()
+      if (atPitRim(stage, them.x, them.z)) out.push(other)
+    }
+    return out
   }
 }

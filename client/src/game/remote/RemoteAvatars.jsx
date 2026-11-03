@@ -1,39 +1,37 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { Suspense, useEffect, useRef, useState } from 'react'
-import { Vector3 } from 'three'
+import { Quaternion, Vector3 } from 'three'
 
-import { ROLL_LAUNCH } from '@shared/balance'
+import { SWIM_DEPTH, WELL_X, wellAt, wellCenterZ } from '@shared/world'
 
+import { emoteFromAnim } from '../../bloxity/emotes'
 import { remotePlayers } from '../../net/remotePlayers'
 import { getQuality } from '../../store/quality'
-import { runtime } from '../runtime'
-import { emoteFromAnim } from '../../bloxity/emotes'
-import { padBounce, padTireTop } from '../padBounce'
 import { BloxityAvatar } from '../PlayerAvatar'
-import { tireWidth } from '../tire'
+import { swimLift, swimTilt } from '../playerPose'
 
 /** How often the set of fully drawn players is reconsidered. */
 const PICK_MS = 500
-/** Top walking speed: full stride amplitude, as for your own character. */
+/** Top walking and swimming speeds: full stride amplitude, as for your own character. */
 const MAX_SPEED = 10.875
-/** Facing down the track, as your own character does to kick off a roll. */
-const TRACK_YAW = Math.PI
-/** Training on a pad, facing out over the plaza, as your own character does. */
-const PAD_YAW = Math.PI / 2
-const bounce = { height: 0, vy: 0, squash: 0 }
+const SWIM_SPEED = 8
 
 const _up = new Vector3(0, 1, 0)
+const _xAxis = new Vector3(1, 0, 0)
+const _tilt = new Quaternion()
+const _lift = { lift: 0, back: 0 }
 
 /**
  * One other player as their real Bloxity avatar, dressed as they are and posed by the
  * same playerPose as yours, from what the network says they're doing: walking pace,
- * bouncing on their tire on a pad (RemotePlayers draws the tire), jumping. While they roll they stay at the Roll Zone; their tire is
- * the ghost tire rolling down the track (roll/Roll.jsx).
+ * scooping at a well (facing it), swimming the crawl across a pit, jumping. Their bucket hangs from the hand
+ * this tracks (RemotePlayers draws every bucket in one go).
  */
 function RemoteAvatar({ sessionId, look }) {
   const groupRef = useRef(null)
+  const handRef = useRef(null)
   const lastY = useRef(null)
-  const motionRef = useRef({ time: 0, speed: 0, grounded: true, maxSpeed: MAX_SPEED, vy: 0, stride: 0 })
+  const motionRef = useRef({ time: 0, speed: 0, grounded: true, maxSpeed: MAX_SPEED, vy: 0, stride: 0, carry: 1, scoop: -1, swim: 0, stroke: 0 })
 
   useFrame((_state, rawDelta) => {
     const group = groupRef.current
@@ -43,38 +41,51 @@ function RemoteAvatar({ sessionId, look }) {
     const m = motionRef.current
     m.time += delta
 
-    const running = r.anim === 'run'
-    // Rolling: they kick their tire off from the roll zone (the ghost tire waits for the
-    // foot, then goes - roll/Roll.jsx), squared up to the track.
-    const ghost = runtime.ghostRolls.get(sessionId)
-    const sinceRoll = ghost ? (performance.now() - ghost.startedAt) / 1000 : -1
-    const kicking = sinceRoll >= 0 && sinceRoll < ROLL_LAUNCH
-    m.kick = kicking ? sinceRoll / ROLL_LAUNCH : -1
+    const scooping = r.anim === 'scoop'
+    const swimming = r.anim === 'swim'
     group.visible = true
     group.position.copy(r.position)
-    group.quaternion.setFromAxisAngle(_up, kicking ? TRACK_YAW : running ? PAD_YAW : r.yaw)
-    if (running) {
-      padBounce(_state.clock.elapsedTime, bounce)
-      group.position.y += padTireTop(tireWidth(r.tireId)) * (1 - 0.15 * bounce.squash) + bounce.height
-    }
+    // Scooping they face their well; swimming they lie down flat on the water.
+    const well = scooping ? wellAt(r.position.x, r.position.z, 1) : -1
+    const yaw = well >= 0 ? Math.atan2(WELL_X - r.position.x, wellCenterZ(well) - r.position.z) : r.yaw
+    const ratio = Math.min(1, r.speed / SWIM_SPEED)
+    const tilt = swimTilt(m.swim, ratio)
+    swimLift(tilt, SWIM_DEPTH, _lift)
+    group.quaternion.setFromAxisAngle(_up, yaw).multiply(_tilt.setFromAxisAngle(_xAxis, tilt))
+    group.position.x -= Math.sin(yaw) * _lift.back
+    group.position.y += _lift.lift
+    group.position.z -= Math.cos(yaw) * _lift.back
 
-    const speed = running ? 0 : r.speed
+    const speed = scooping ? 0 : r.speed
     m.speed = speed
-    m.grounded = running ? bounce.height < 0.12 : r.anim !== 'jump'
+    m.maxSpeed = swimming ? SWIM_SPEED : MAX_SPEED
+    if (swimming) m.stroke += delta * (2.4 + 3.6 * ratio)
+    m.grounded = r.anim !== 'jump'
+    // The haul's phase, kept per player by RemotePlayers so the splash lands on the plunge.
+    m.scoop = scooping ? Math.max(0, r.scoopPhase ?? 0) : -1
+    m.swim = swimming ? Math.min(1, m.swim + delta * 6) : Math.max(0, m.swim - delta * 6)
     // A Boxity emote they're playing (stood still while it lasts).
     m.emote = emoteFromAnim(r.anim)
     if (m.emote) m.speed = 0
     // Vertical speed from the interpolated height, smoothed: rising vs falling.
     const y = r.position.y
-    if (running) m.vy = bounce.vy
-    else if (lastY.current !== null) m.vy += ((y - lastY.current) / Math.max(delta, 1e-3) - m.vy) * 0.3
+    if (lastY.current !== null) m.vy += ((y - lastY.current) / Math.max(delta, 1e-3) - m.vy) * 0.3
     lastY.current = y
     m.stride += delta * (5 + 6 * Math.min(1, speed / MAX_SPEED))
+
+    // Where their hand was put last frame, in the world, for their bucket.
+    const hand = handRef.current
+    if (hand) {
+      group.updateMatrixWorld()
+      r.hand.copy(hand.position).applyMatrix4(group.matrixWorld)
+      r.handSeen = performance.now()
+    }
   })
 
   return (
     <group ref={groupRef}>
-      <BloxityAvatar equipped={look?.equipped} proportions={look?.proportions} motionRef={motionRef} targetHeight={1.8} />
+      <BloxityAvatar equipped={look?.equipped} proportions={look?.proportions} motionRef={motionRef} handRef={handRef} targetHeight={1.8} />
+      <group ref={handRef} />
     </group>
   )
 }

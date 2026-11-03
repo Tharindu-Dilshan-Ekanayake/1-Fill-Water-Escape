@@ -15,7 +15,8 @@ import { iconUrl } from '../../ui/icons'
  * Floating world text ("FREE x1 Power", "World 2 - Needs 2.5M Power", prices...).
  *
  * Every label is drawn once into a shared canvas atlas and shown as a camera-facing
- * quad; all quads of one atlas page are a single mesh. So the whole lobby's labels cost
+ * quad - or, for words printed on a sign board, a flat one facing down the course (+z)
+ * that stays on its board from any angle; all quads of one atlas page are a single mesh. So the whole lobby's labels cost
  * one draw call and one texture, instead of a mesh + texture (or a DOM element
  * re-projected every frame) per label.
  *
@@ -33,15 +34,17 @@ const LINE_GAP = 0.04
 const vertexShader = /* glsl */ `
   attribute vec2 aCorner;
   attribute float aFade;
+  attribute float aFlat;
   uniform float uMaxDistance;
   varying vec2 vUv;
   varying float vAlpha;
   void main() {
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    // Flat labels: the corner is in the world, on the board.
+    vec4 mv = modelViewMatrix * vec4(position + vec3(aCorner * aFlat, 0.0), 1.0);
     float d = -mv.z;
-    // Shrink when the camera gets close, so a sign never fills the screen, and fade
-    // right out at arm's length.
-    mv.xy += aCorner * clamp(d / 18.0, 0.4, 1.0);
+    // Camera-facing ones: shrink when the camera gets close, so a sign never fills the
+    // screen. Both fade right out at arm's length.
+    mv.xy += aCorner * (1.0 - aFlat) * clamp(d / 18.0, 0.4, 1.0);
     gl_Position = projectionMatrix * mv;
     float far = min(aFade, uMaxDistance);
     vAlpha = (1.0 - smoothstep(far * 0.75, far, d)) * smoothstep(2.5, 6.0, d);
@@ -173,11 +176,13 @@ export class LabelBatch {
    * @param {string} id
    * @param {[number, number, number]} position world-space centre
    * @param {object} spec see file comment
-   * @param {{ fade?: number, reserve?: object }} [options] `reserve` is a spec at least
+   * `flat` prints it facing +z (on a sign board) instead of facing the camera; `fit` is
+   * the [width, height] in world units it's scaled down to fit, if it's bigger.
+   * @param {{ fade?: number, reserve?: object, flat?: boolean, fit?: number[] }} [options] `reserve` is a spec at least
    *   as large as anything `update` will later draw here.
    */
-  add(id, position, spec, { fade = 140, reserve } = {}) {
-    this.labels.set(id, { id, position, spec, fade, reserve })
+  add(id, position, spec, { fade = 140, reserve, flat = false, fit } = {}) {
+    this.labels.set(id, { id, position, spec, fade, reserve, flat, fit })
     return this
   }
 
@@ -278,11 +283,13 @@ export class LabelBatch {
     const corners = new Float32Array(n * 8)
     const uvs = new Float32Array(n * 8)
     const fades = new Float32Array(n * 4)
+    const flats = new Float32Array(n * 4)
     const index = new Uint16Array(n * 6)
     const size = this.pageSize
 
     page.labels.forEach((l, i) => {
-      const unit = (l.spec.pxPerUnit || 60) * this.scale
+      let unit = (l.spec.pxPerUnit || 60) * this.scale
+      if (l.fit) unit = Math.max(unit, l.w / l.fit[0], l.h / l.fit[1])
       const hw = l.w / unit / 2
       const hh = l.h / unit / 2
       const u0 = l.x / size
@@ -301,6 +308,7 @@ export class LabelBatch {
         corners.set([cx, cy], vi * 2)
         uvs.set([u, v], vi * 2)
         fades[vi] = l.fade
+        flats[vi] = l.flat ? 1 : 0
       })
       index.set([i * 4, i * 4 + 1, i * 4 + 2, i * 4, i * 4 + 2, i * 4 + 3], i * 6)
     })
@@ -310,6 +318,7 @@ export class LabelBatch {
     geometry.setAttribute('aCorner', new BufferAttribute(corners, 2))
     geometry.setAttribute('uv', new BufferAttribute(uvs, 2))
     geometry.setAttribute('aFade', new BufferAttribute(fades, 1))
+    geometry.setAttribute('aFlat', new BufferAttribute(flats, 1))
     geometry.setIndex(new BufferAttribute(index, 1))
     return geometry
   }

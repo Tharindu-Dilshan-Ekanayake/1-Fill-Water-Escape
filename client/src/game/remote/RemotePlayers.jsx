@@ -2,13 +2,18 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, Matrix4, Quaternion, Vector3 } from 'three'
 
+import { SWIM_DEPTH, WELL_X, wellAt, wellCenterZ } from '@shared/world'
+
 import { remotePlayers } from '../../net/remotePlayers'
 import { getQuality } from '../../store/quality'
 import { createBoxInstances, disposeBlocks } from '../blocks'
+import { BUCKET_GRIP, bucketMatrix, createBucketMesh, disposeBucketMesh } from '../bucket'
 import { sharedMaterials, STYLE } from '../materials'
-import { PAD_FLAT, PAD_TIRE_SIZE, padBounce, padTireTop } from '../padBounce'
+import { BUCKET_SIZE } from '../Player'
+import { burst } from '../fx/fxQueue'
+import { SCOOP_CYCLE, SCOOP_SPLASH, scoopArm, swimLift, swimTilt } from '../playerPose'
 import { runtime } from '../runtime'
-import { createTireMesh, disposeTireMesh, tireWidth } from '../tire'
+import { WELL_WATER_Y } from '../world/structures'
 import { hideNameplatesFrom, NAMEPLATE_POOL_SIZE, placeNameplate } from './nameplates'
 
 /** Remote players are drawn this far in the past, so 10 Hz updates interpolate. */
@@ -16,11 +21,16 @@ const INTERP_DELAY_MS = 110
 const MAX_REMOTES = 8
 const PARTS = 6
 const S = 0.36
-/** Training on a pad, facing out over the plaza, as your own character does. */
-const PAD_YAW = Math.PI / 2
-/** A tire lying flat: its axle turned from X to straight up. */
-const LIE_FLAT = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2)
-const bounce = { height: 0, vy: 0, squash: 0 }
+/** Swimming speed, for how flat a swimmer lies. */
+const SWIM_SPEED = 8
+/** Others' scoops splash only this close to you (the particle pool is shared). */
+const SPLASH_DISTANCE = 30
+const _tilt = new Quaternion()
+const _tilt2 = new Quaternion()
+const _xAxis = new Vector3(1, 0, 0)
+const _lift = { lift: 0, back: 0 }
+/** A real avatar's hand counts as current for this long (ms) after it was last placed. */
+const HAND_FRESH = 250
 
 /** Classic blocky figure, in studs-scaled units: [x, y(pivot), size, hangs from pivot]. */
 const PART_LAYOUT = [
@@ -109,13 +119,13 @@ function writeFigure(body, instance, r, base, swing, armSwing) {
 }
 
 /** Puts a name tag over `at`, if it's on screen; returns the next free tag. */
-function writeNameplate(plate, name, at, distance, maxDistance, camera, size, uid) {
+function writeNameplate(plate, name, at, distance, maxDistance, camera, size, uid, tag) {
   if (plate >= NAMEPLATE_POOL_SIZE) return plate
   if (distance < maxDistance) {
     _v.copy(at).project(camera)
     if (_v.z < 1) {
       const fade = Math.min(1, (maxDistance - distance) / 6)
-      placeNameplate(plate, name, (_v.x * 0.5 + 0.5) * size.width, (-_v.y * 0.5 + 0.5) * size.height, fade, uid)
+      placeNameplate(plate, name, (_v.x * 0.5 + 0.5) * size.width, (-_v.y * 0.5 + 0.5) * size.height, fade, uid, tag)
       return plate + 1
     }
   }
@@ -124,31 +134,30 @@ function writeNameplate(plate, name, at, distance, maxDistance, camera, size, ui
 }
 
 /**
- * Everyone else in the lobby: blocky avatars (one InstancedMesh for every limb of every
- * player), name tags and their pets (handed to the shared pet renderer). While someone
- * rolls they stay on the Roll Zone, watching; their tire is the ghost tire Roll.jsx
- * replays down the track. On a pad they bounce on their tire lying flat (drawn here for
- * everyone, real avatars included). Hidden past the preset's draw distance.
+ * Everyone else: blocky avatars (one InstancedMesh for every limb of every player),
+ * every player's bucket (one more, real avatars included: it hangs from their hand),
+ * name tags and their pets (handed to the shared pet renderer). Hidden past the
+ * preset's draw distance.
  */
 export function RemotePlayers() {
   const camera = useThree((s) => s.camera)
   const size = useThree((s) => s.size)
   const bodyRef = useRef(null)
-  const tiresRef = useRef(null)
+  const bucketsRef = useRef(null)
 
   const assets = useMemo(() => {
     // Smooth toy boxes: the shared toy material, so no extra shader program.
     const body = createBoxInstances(MAX_REMOTES * PARTS, sharedMaterials().toy, STYLE.SMOOTH)
     body.castShadow = true
-    // Trainers' tires, lying flat on their pads.
-    const tires = createTireMesh(MAX_REMOTES)
-    return { body, tires }
+    // Everyone's bucket.
+    const buckets = createBucketMesh(MAX_REMOTES)
+    return { body, buckets }
   }, [])
 
   useEffect(
     () => () => {
       disposeBlocks(assets.body)
-      disposeTireMesh(assets.tires)
+      disposeBucketMesh(assets.buckets)
       hideNameplatesFrom(0)
     },
     [assets],
@@ -156,8 +165,8 @@ export function RemotePlayers() {
 
   useFrame((state, rawDelta) => {
     const body = bodyRef.current
-    const tires = tiresRef.current
-    if (!body || !tires) return
+    const buckets = bucketsRef.current
+    if (!body || !buckets) return
     const delta = Math.min(rawDelta, 0.05)
     const settings = getQuality()
     const now = performance.now()
@@ -166,7 +175,7 @@ export function RemotePlayers() {
 
     let instance = 0
     let plate = 0
-    let trainers = 0
+    let carried = 0
     runtime.remotePets.length = 0
 
     for (const r of remotePlayers.values()) {
@@ -178,37 +187,67 @@ export function RemotePlayers() {
       const distance = camera.position.distanceTo(r.position)
       const visible = distance < settings.remoteDrawDistance
       r.shadow.visible = visible
-      const running = r.anim === 'run'
+      const scooping = r.anim === 'scoop'
+      const swimming = r.anim === 'swim'
+      // Scooping they face their well, hauling Water out of it (playerPose SCOOP_KEYS):
+      // one phase per player, which their full avatar (RemoteAvatars) follows too.
+      const well = scooping ? wellAt(r.position.x, r.position.z, 1) : -1
+      const before = r.scoopPhase ?? -1
+      r.scoopPhase = scooping ? (Math.max(0, before) + delta / SCOOP_CYCLE) % 1 : -1
+      // Their plunge splashes too, close enough to see.
+      if (well >= 0 && distance < SPLASH_DISTANCE && before >= 0 && before < SCOOP_SPLASH && (r.scoopPhase >= SCOOP_SPLASH || r.scoopPhase < before)) {
+        const cz = wellCenterZ(well)
+        const d = Math.max(1e-3, Math.hypot(r.position.x - WELL_X, r.position.z - cz))
+        burst({
+          x: WELL_X + ((r.position.x - WELL_X) / d) * 0.45,
+          y: WELL_WATER_Y + 0.05,
+          z: cz + ((r.position.z - cz) / d) * 0.45,
+          count: 12,
+          speed: 7,
+          palette: 'water',
+          drops: true,
+          spread: 0.35,
+        })
+      }
+      const yaw = well >= 0 ? Math.atan2(WELL_X - r.position.x, wellCenterZ(well) - r.position.z) : r.yaw
+      _q.setFromAxisAngle(_up, yaw)
 
-      // Training: their tire flat on the pad, and them bouncing on it.
-      let lift = 0
-      if (visible && running && trainers < MAX_REMOTES) {
-        padBounce(t, bounce)
-        const top = padTireTop(tireWidth(r.tireId))
-        lift = top * (1 - 0.15 * bounce.squash) + bounce.height
-        _v.set(r.position.x, r.position.y + top / 2, r.position.z)
-        _s.set(PAD_TIRE_SIZE * PAD_FLAT * tireWidth(r.tireId) * (1 - 0.3 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash), PAD_TIRE_SIZE)
-        tires.setMatrixAt(trainers, _m.compose(_v, LIE_FLAT, _s))
-        tires.setStyle(trainers, r.tireId)
-        trainers += 1
+      // Players drawn as their real avatar (RemoteAvatars) skip the blocky figure, and
+      // carry their bucket in the hand it tracks; the figure holds its own out in front.
+      const fullHand = r.fullAvatar && now - r.handSeen < HAND_FRESH
+      let rightArm = 0
+      if (visible && !r.fullAvatar && instance + PARTS <= MAX_REMOTES * PARTS) {
+        const walking = !scooping && r.speed > 0.6
+        if (walking) r.walkPhase += delta * (swimming ? 4 : 6 + Math.min(r.speed, 10) * 0.5)
+        const swing = walking ? Math.sin(r.walkPhase) * 0.9 : 0
+        // Scooping: the arms follow the haul's swing; swimming: they reach and pull.
+        const armSwing = scooping ? scoopArm(r.scoopPhase) : swimming ? -2.4 + Math.sin(r.walkPhase) * 1.2 : null
+        // Swimming, lying down flat on the water like everyone's real avatar does.
+        const tilt = swimming ? swimTilt(1, Math.min(1, r.speed / SWIM_SPEED)) : 0
+        swimLift(tilt, SWIM_DEPTH, _lift)
+        _v.set(r.position.x - Math.sin(yaw) * _lift.back, r.position.y + (swimming ? _lift.lift : 0), r.position.z - Math.cos(yaw) * _lift.back)
+        _base.compose(_v, _tilt.copy(_q).multiply(_tilt2.setFromAxisAngle(_xAxis, tilt)), _s.set(1, 1, 1))
+        instance = writeFigure(body, instance, r, _base, swing, armSwing)
+        rightArm = armSwing ?? swing
       }
 
-      // Players drawn as their real avatar (RemoteAvatars) skip the blocky figure.
-      if (visible && !r.fullAvatar && instance + PARTS <= MAX_REMOTES * PARTS) {
-        const walking = !running && r.speed > 0.6
-        if (walking) r.walkPhase += delta * (6 + Math.min(r.speed, 10) * 0.5)
-        const swing = walking ? Math.sin(r.walkPhase) * 0.9 : 0
-        _q.setFromAxisAngle(_up, running ? PAD_YAW : r.yaw)
-        _v.set(r.position.x, r.position.y + lift, r.position.z)
-        _base.compose(_v, _q, _s.set(1, 1, 1))
-        // In the air off the tire: arms up, as in a jump.
-        instance = writeFigure(body, instance, r, _base, swing, running && bounce.height > 0.12 ? -2.4 : null)
+      // Their bucket, hanging from the grip in their hand (out of sight while they swim).
+      if (visible && !swimming && carried < MAX_REMOTES) {
+        if (fullHand) _target.copy(r.hand)
+        else {
+          // The blocky figure's right hand: the bottom of its swung right arm.
+          _target.set(1.5 * S, 1.44 - 2 * S * Math.cos(rightArm), -2 * S * Math.sin(rightArm)).applyQuaternion(_q).add(r.position)
+        }
+        _target.y -= BUCKET_GRIP.y * BUCKET_SIZE
+        buckets.setMatrixAt(carried, bucketMatrix(_target, _q, BUCKET_SIZE, r.bucketId, _m))
+        buckets.setStyle(carried, r.bucketId)
+        carried += 1
       }
 
       // Name tag, just above the head (players are 1.8 tall).
       if (visible) {
-        _v.set(r.position.x, r.position.y + 2.05 + lift, r.position.z)
-        plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size, r.uid)
+        _v.set(r.position.x, r.position.y + 2.05, r.position.z)
+        plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size, r.uid, r.tag)
       }
 
       // Their pets: follow in formation, drawn by the shared pet renderer.
@@ -234,14 +273,14 @@ export function RemotePlayers() {
     body.count = instance
     body.instanceMatrix.needsUpdate = true
     if (body.instanceColor) body.instanceColor.needsUpdate = true
-    tires.count = trainers
-    tires.instanceMatrix.needsUpdate = true
+    buckets.count = carried
+    buckets.instanceMatrix.needsUpdate = true
   })
 
   return (
     <>
       <primitive ref={bodyRef} object={assets.body} />
-      <primitive ref={tiresRef} object={assets.tires} />
+      <primitive ref={bucketsRef} object={assets.buckets} />
     </>
   )
 }

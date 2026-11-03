@@ -1,45 +1,58 @@
 import {
   AD_REWARDS,
   BADGES,
+  BUCKETS,
+  CO_OP_TIP,
+  COIN_SHARE,
+  COSMETICS,
+  COLLECTION_BONUS,
   DAILY_INTERVAL_MS,
   DAILY_REWARDS,
   EGGS,
   FREE_REWARD,
   GEM_PRODUCTS,
-  HEALTH_PACKS,
-  healthForLevel,
+  GOLDEN_BOOST,
+  GOLDEN_FUSE,
   ITEMS,
+  LAST_STAGE,
+  MEGA_CHESTS,
   levelCap,
+  POUR_MIN_SECONDS,
+  POUR_RATE,
+  QUEST_BONUS,
+  QUEST_REWARDS,
+  QUESTS,
+  QUESTS_PER_DAY,
   MAX_EQUIPPED_PETS,
   MAX_PET_INVENTORY,
+  maxStars,
   OFFLINE_MAX_MS,
   OFFLINE_MIN_MS,
   OFFLINE_RATE,
-  PADS,
   PETS,
   PLAYTIME_REWARDS,
   RARITIES,
-  REBIRTH_SKIP_ROLLS,
+  REBIRTH_SKIP_RUNS,
   rebirthGift,
   rebirthMultiplier,
-  ROLL_BASE,
-  ROLL_H0,
-  ROLL_RECOVERY,
-  rollDuration,
+  runSeconds,
   SHOP,
-  TIRES,
+  SKIP_RUNS,
+  STAR_POWER,
+  starPrice,
+  stagesOf,
+  STREAMS,
   TRAIN_INTERVAL,
-  TROPHY_FIRST,
-  TROPHY_METERS,
-  TROPHY_SPACING,
+  TRAILS,
   TUTORIAL,
-  WALL_MARGIN,
-  WALL_STOP,
+  WATER_PACKS,
+  waterForLevel,
+  WEEKLY_REWARDS,
+  WELLS,
   WORLD_PORTALS,
-  WORLD_ZONES,
-  ZONES,
-  zonesOf,
 } from './balance.js'
+import { formatNumber } from './format.js'
+import { mulberry32 } from './rng.js'
 
 /**
  * Game rules as pure functions over a plain profile object.
@@ -60,41 +73,58 @@ export function createProfile(id, name) {
     v: PROFILE_VERSION,
     id,
     name,
-    health: 0,
+    /** Water Power: what fills the pits. Kept between runs, reset by a rebirth. */
+    water: 0,
     wins: 0,
     rebirths: 0,
     level: 1,
-    equippedTire: 'bicycle',
-    ownedTires: ['bicycle'],
+    equippedBucket: 'pail',
+    ownedBuckets: ['pail'],
+    /** Stars (upgrades, 1-BUCKET_STARS) on each bucket you own, by id. */
+    bucketStars: {},
+    /**
+     * The furthest pit the Skip pads have filled for you (0 = none): until your next
+     * rebirth you reach at least this stage, whatever your Water.
+     */
+    skipTo: 0,
     pets: [],
     equippedPets: [],
     nextPetUid: 1,
     items: {},
-    boosts: { health: 0, wins: 0 },
+    boosts: { water: 0, wins: 0 },
     passes: {},
     daily: { start: 0, claimed: [] },
     freeRewardClaimed: false,
     tutorialStep: 0,
     badges: [],
     stats: {
-      rolls: 0,
+      /** Wins pads claimed (Auto Win's included). */
+      runs: 0,
       trains: 0,
-      bestDistance: 0,
       playtime: 0,
-      bestHealth: 0,
+      bestWater: 0,
       totalWins: 0,
-      wallsBroken: 0,
-      /** Furthest zone ever reached (index into ZONES): its `discover` prize is paid once. */
-      bestZone: 0,
+      skips: 0,
+      /** Furthest ledge ever reached in World 1 (index into STAGES): its `discover` prize is paid once. */
+      bestStage: 0,
       /** The same for World 2's stages. */
-      bestZone2: 0,
+      bestStage2: 0,
     },
     /** The world you're in (index into WORLDS), and whether World 2's portal is open. */
     world: 0,
     world2Unlocked: false,
-    lastPad: -1,
+    lastWell: -1,
     lastSeen: 0,
-    settings: { autoRebirth: false, autoRoll: false },
+    settings: { autoRebirth: false, autoWin: false },
+    /** Cosmetics owned (stream and trail ids) and the ones you show. */
+    cosmetics: { owned: ['water', 'none'], stream: 'water', trail: 'none' },
+    /**
+     * Wins earned this week (weekOf) from pads and coins, for the weekly board; `prev`
+     * is the week before's, kept for its reward; `rewarded` the last week rewarded.
+     */
+    weekly: { week: 0, wins: 0, prev: { week: 0, wins: 0 }, rewarded: 0 },
+    /** Today's quests (see currentQuests): the day they're for, progress by quest id, and the all-done bonus. */
+    quests: { day: 0, progress: {}, bonus: false },
   }
 }
 
@@ -107,23 +137,56 @@ export function normalizeProfile(raw, id, name) {
   p.stats = { ...base.stats, ...(raw.stats || {}) }
   p.settings = { ...base.settings, ...(raw.settings || {}) }
   p.daily = { ...base.daily, ...(raw.daily || {}) }
+  const weekly = raw.weekly && typeof raw.weekly === 'object' ? raw.weekly : {}
+  const count = (n) => (Number.isFinite(n) ? Math.max(0, n) : 0)
+  p.weekly = {
+    week: count(weekly.week),
+    wins: count(weekly.wins),
+    prev: { week: count(weekly.prev?.week), wins: count(weekly.prev?.wins) },
+    rewarded: count(weekly.rewarded),
+  }
+  const looks = raw.cosmetics && typeof raw.cosmetics === 'object' ? raw.cosmetics : {}
+  const known = (id) => STREAMS[id] || TRAILS[id]
+  const ownedLooks = [...new Set([...base.cosmetics.owned, ...(Array.isArray(looks.owned) ? looks.owned.filter(known) : [])])]
+  p.cosmetics = {
+    owned: ownedLooks,
+    stream: STREAMS[looks.stream] && ownedLooks.includes(looks.stream) ? looks.stream : 'water',
+    trail: TRAILS[looks.trail] && ownedLooks.includes(looks.trail) ? looks.trail : 'none',
+  }
+  const quests = raw.quests && typeof raw.quests === 'object' ? raw.quests : {}
+  p.quests = {
+    day: Number.isInteger(quests.day) ? quests.day : 0,
+    progress: Object.fromEntries(
+      Object.entries(quests.progress || {})
+        .filter(([questId, n]) => QUESTS.some((q) => q.id === questId) && Number.isFinite(n))
+        .map(([questId, n]) => [questId, Math.max(0, n)]),
+    ),
+    bonus: quests.bonus === true,
+  }
   p.items = Object.fromEntries(Object.entries(raw.items || {}).filter(([itemId]) => ITEMS[itemId]))
   p.passes = Object.fromEntries(Object.entries(raw.passes || {}).filter(([productId]) => SHOP[productId]))
-  p.health = Number.isFinite(raw.health) ? Math.max(0, raw.health) : 0
+  p.water = Number.isFinite(raw.water) ? Math.max(0, raw.water) : 0
   p.wins = Number.isFinite(raw.wins) ? Math.max(0, raw.wins) : 0
   p.pets = Array.isArray(raw.pets) ? raw.pets.filter((pet) => PETS[pet?.id]) : []
   p.equippedPets = Array.isArray(raw.equippedPets)
     ? raw.equippedPets.filter((uid) => p.pets.some((pet) => pet.uid === uid)).slice(0, MAX_EQUIPPED_PETS)
     : []
-  const owned = Array.isArray(raw.ownedTires) ? raw.ownedTires.filter((tireId) => tireIndex(tireId) >= 0) : []
-  p.ownedTires = owned.length ? owned : ['bicycle']
-  if (!p.ownedTires.includes(p.equippedTire)) p.equippedTire = p.ownedTires[0]
-  p.stats.bestZone = Math.min(ZONES.length - 1, Math.max(0, Math.floor(p.stats.bestZone) || 0))
-  p.stats.bestZone2 = Math.min(ZONES.length - 1, Math.max(0, Math.floor(p.stats.bestZone2) || 0))
+  const owned = Array.isArray(raw.ownedBuckets) ? raw.ownedBuckets.filter((bucketId) => bucketIndex(bucketId) >= 0) : []
+  p.ownedBuckets = owned.length ? owned : ['pail']
+  if (!p.ownedBuckets.includes(p.equippedBucket)) p.equippedBucket = p.ownedBuckets[0]
+  p.bucketStars = Object.fromEntries(
+    Object.entries(raw.bucketStars || {})
+      .filter(([bucketId]) => p.ownedBuckets.includes(bucketId))
+      .map(([bucketId, stars]) => [bucketId, Math.min(maxStars(bucketIndex(bucketId)), Math.max(0, Math.floor(stars) || 0))]),
+  )
+  const stage = (n) => Math.min(LAST_STAGE, Math.max(0, Math.floor(n) || 0))
+  p.stats.bestStage = stage(p.stats.bestStage)
+  p.stats.bestStage2 = stage(p.stats.bestStage2)
+  p.skipTo = stage(raw.skipTo)
   p.world2Unlocked = raw.world2Unlocked === true
   p.world = p.world2Unlocked && raw.world === 1 ? 1 : 0
-  // Levels follow from Health; recompute rather than trust a stored one.
-  p.level = levelFor(p.health, p.rebirths)
+  // Levels follow from Water; recompute rather than trust a stored one.
+  p.level = levelFor(p.water, p.rebirths)
   // The tutorial is for brand-new players only: anyone who has rebirthed is past it.
   if (p.rebirths > 0) p.tutorialStep = TUTORIAL.length
   p.tutorialStep = Math.min(TUTORIAL.length, Math.max(0, Math.floor(p.tutorialStep) || 0))
@@ -137,18 +200,24 @@ export function createSession(now) {
 
 // --- Lookups ------------------------------------------------------------------------
 
-export const tireIndex = (id) => TIRES.findIndex((t) => t.id === id)
-export const tireById = (id) => TIRES.find((t) => t.id === id) || TIRES[0]
+export const bucketIndex = (id) => BUCKETS.findIndex((b) => b.id === id)
+export const bucketById = (id) => BUCKETS.find((b) => b.id === id) || BUCKETS[0]
 
-export function isPadUnlocked(profile, index) {
-  const pad = PADS[index]
-  if (!pad) return false
-  if (pad.product) return Boolean(profile.passes[pad.product])
-  return profile.rebirths >= pad.rebirths
+/** Stars on bucket `id` (0 if none, or not owned). */
+export const bucketStars = (profile, id) => profile.bucketStars?.[id] || 0
+
+/** What one scoop of bucket `id` is worth before multipliers: its power, times its stars. */
+export const bucketPower = (profile, id) => bucketById(id).power * STAR_POWER ** bucketStars(profile, id)
+
+export function isWellUnlocked(profile, index) {
+  const well = WELLS[index]
+  if (!well) return false
+  if (well.product) return Boolean(profile.passes[well.product])
+  return profile.rebirths >= well.rebirths
 }
 
 /**
- * Health values are kept to a tenth below a million and whole above, so repeated
+ * Water values are kept to a tenth below a million and whole above, so repeated
  * small gains don't pile up float dust.
  */
 export const tidy = (value) => (value < 1e6 ? Math.round(value * 10) / 10 : Math.round(value))
@@ -162,11 +231,11 @@ export function niceRound(n) {
 
 // --- Levels -------------------------------------------------------------------------
 
-/** The level `health` reaches, never above the cap for `rebirths`. */
-export function levelFor(health, rebirths) {
+/** The level `water` reaches, never above the cap for `rebirths`. */
+export function levelFor(water, rebirths) {
   const cap = levelCap(rebirths)
   let level = 1
-  while (level < cap && health >= healthForLevel(level + 1)) level += 1
+  while (level < cap && water >= waterForLevel(level + 1)) level += 1
   return level
 }
 
@@ -175,9 +244,9 @@ export const isMaxLevel = (profile) => profile.level >= levelCap(profile.rebirth
 /** 0..1 through the current level: what the level bar fills to. */
 export function levelProgress(profile) {
   if (isMaxLevel(profile)) return 1
-  const from = healthForLevel(profile.level)
-  const to = healthForLevel(profile.level + 1)
-  return Math.max(0, Math.min(1, (profile.health - from) / Math.max(1e-9, to - from)))
+  const from = waterForLevel(profile.level)
+  const to = waterForLevel(profile.level + 1)
+  return Math.max(0, Math.min(1, (profile.water - from) / Math.max(1e-9, to - from)))
 }
 
 /** 0..1 progress towards being able to rebirth, by levels. */
@@ -190,20 +259,27 @@ export function rebirthProgress(profile) {
 // --- Multipliers --------------------------------------------------------------------
 
 /** Equipped pets stack additively: x3 and x2 together make x4, not x6. */
+/** What one pet multiplies your Water by: its kind's, with GOLDEN_BOOST times the bonus if it's golden. */
+export function petMult(pet) {
+  const info = PETS[pet.id]
+  if (!info) return 1
+  return pet.golden ? 1 + (info.mult - 1) * GOLDEN_BOOST : info.mult
+}
+
 export function petMultiplier(profile) {
   let total = 1
   for (const uid of profile.equippedPets) {
     const pet = profile.pets.find((p) => p.uid === uid)
-    if (pet && PETS[pet.id]) total += PETS[pet.id].mult - 1
+    if (pet) total += petMult(pet) - 1
   }
   return total
 }
 
 export const isBoostActive = (profile, kind, now) => (profile.boosts[kind] || 0) > now
 
-/** The x2 Health pass and potion; they stack. */
-export function healthBoostMultiplier(profile, now) {
-  return (profile.passes.healthX2 ? 2 : 1) * (isBoostActive(profile, 'health', now) ? 2 : 1)
+/** The x2 Water pass and potion; they stack. */
+export function waterBoostMultiplier(profile, now) {
+  return (profile.passes.waterX2 ? 2 : 1) * (isBoostActive(profile, 'water', now) ? 2 : 1)
 }
 
 /** The x2 Wins pass and potion; they stack. */
@@ -211,220 +287,315 @@ export function winsMultiplier(profile, now) {
   return (profile.passes.winsX2 ? 2 : 1) * (isBoostActive(profile, 'wins', now) ? 2 : 1)
 }
 
-/** Everything that multiplies a Health gain except the tire and where you earn it. */
+/** Everything that multiplies a Water gain except the bucket and where you scoop it. */
+/** Your bucket collection's bonus: COLLECTION_BONUS for every bucket past the first. */
+export const collectionMultiplier = (profile) => 1 + COLLECTION_BONUS * Math.max(0, profile.ownedBuckets.length - 1)
+
 export function gainMultiplier(profile, now) {
-  return rebirthMultiplier(profile.rebirths) * petMultiplier(profile) * healthBoostMultiplier(profile, now)
+  return rebirthMultiplier(profile.rebirths) * petMultiplier(profile) * collectionMultiplier(profile) * waterBoostMultiplier(profile, now)
 }
 
-/** Health from one gain anywhere but a pad: your tire's power, multiplied. */
-export const baseGain = (profile, now) => tidy(tireById(profile.equippedTire).power * gainMultiplier(profile, now))
+/** Water from one gain anywhere but a well: your bucket's power, multiplied. */
+export const baseGain = (profile, now) => tidy(bucketPower(profile, profile.equippedBucket) * gainMultiplier(profile, now))
 
-/** Health from one training step on pad `index`. */
-export function padGain(profile, index, now) {
-  const pad = PADS[index]
-  if (!pad) return 0
-  return tidy(tireById(profile.equippedTire).power * pad.mult * gainMultiplier(profile, now))
+/** Water from one scoop in well `index`. */
+export function wellGain(profile, index, now) {
+  const well = WELLS[index]
+  if (!well) return 0
+  return tidy(bucketPower(profile, profile.equippedBucket) * well.mult * gainMultiplier(profile, now))
 }
 
 // --- Training, levels, rebirth ------------------------------------------------------
 
 /**
- * Banks a natural gain (pad, rolling or walking) and the levels it reaches. Once you're
- * at max level natural gains stop: rebirth to keep going. Returns what was really added.
+ * Banks a natural gain (a well's scoop or a tap) and the levels it reaches. Once you're at
+ * max level natural gains stop: rebirth to keep going. Returns what was really added.
  */
-function addHealth(profile, gain) {
+function addWater(profile, gain) {
   const cap = levelCap(profile.rebirths)
   if (profile.level >= cap) return { gain: 0, leveledUp: false, maxed: true }
   // Stops exactly on max level rather than overshooting it.
-  const room = Math.max(0, healthForLevel(cap) - profile.health)
+  const room = Math.max(0, waterForLevel(cap) - profile.water)
   const added = tidy(Math.min(gain, room))
-  profile.health = tidy(profile.health + added)
+  profile.water = tidy(profile.water + added)
   profile.stats.trains += 1
-  profile.stats.bestHealth = Math.max(profile.stats.bestHealth, profile.health)
+  profile.stats.bestWater = Math.max(profile.stats.bestWater, profile.water)
   const before = profile.level
-  profile.level = levelFor(profile.health, profile.rebirths)
+  profile.level = levelFor(profile.water, profile.rebirths)
   return { gain: added, leveledUp: profile.level > before, levels: profile.level - before, maxed: profile.level >= cap }
 }
 
 export function applyTrain(profile, index, now) {
-  if (!isPadUnlocked(profile, index)) return { ok: false, error: 'Pad locked' }
-  profile.lastPad = index
-  return { ok: true, ...addHealth(profile, padGain(profile, index, now)) }
+  if (!isWellUnlocked(profile, index)) return { ok: false, error: 'Well locked' }
+  profile.lastWell = index
+  return { ok: true, ...addWater(profile, wellGain(profile, index, now)) }
 }
 
-/** One tick of Health while your tire rolls. */
-export function applyRollTick(profile, now) {
-  return { ok: true, ...addHealth(profile, baseGain(profile, now)) }
+/**
+ * One tap of the screen: a scoop of your bucket, times well `index` if you're standing
+ * in one you've unlocked (-1: none, x1). The session limits how often.
+ */
+export function applyClick(profile, index, now) {
+  const gain = index >= 0 && isWellUnlocked(profile, index) ? wellGain(profile, index, now) : baseGain(profile, now)
+  return { ok: true, ...addWater(profile, gain) }
 }
 
-/** One step's worth of walking round the lobby: the same gain as a roll tick. */
-export const applyWalkStep = applyRollTick
-
-/** Rebirth: +1 rebirth; Health and levels reset (Wins, tires and pets stay). */
+/**
+ * Rebirth: +1 rebirth; Water, levels and the pits you skipped reset (Wins, buckets and
+ * pets stay).
+ */
 export function applyRebirth(profile) {
   if (!isMaxLevel(profile)) return { ok: false, error: `Reach level ${levelCap(profile.rebirths)} first!` }
   profile.rebirths += 1
   profile.tutorialStep = TUTORIAL.length
-  profile.health = 0
+  profile.water = 0
   profile.level = 1
+  profile.skipTo = 0
   const gift = rebirthGift(profile.rebirths)
   if (gift) addItem(profile, gift.item, gift.amount)
   return { ok: true, rebirths: profile.rebirths, gift }
 }
 
-// --- Rolling ------------------------------------------------------------------------
-
-/** How far `health` rolls on open ground, before any wall gets in the way. */
-/** Health that just reaches each gate on open ground (its wall needs WALL_MARGIN times it). */
-const GATE_REACH = ZONES.map((z) => z.wall / WALL_MARGIN)
+// --- The escape course --------------------------------------------------------------
 
 /**
- * How far `health` rolls on open ground, before any wall gets in the way: up to the
- * first gate along a gentle curve from ROLL_BASE, then from each gate's mark to the next
- * as Health climbs from one gate's reach to the next (in log terms), and past the last
- * gate at the last stage's pace.
+ * The furthest stage of `world` whose pit (and every one before it) `water` is strong
+ * enough to fill.
  */
-export function rollReach(health) {
-  const h = Math.max(0, health)
-  const first = GATE_REACH[1]
-  if (h <= first) return ROLL_BASE + ((ZONES[1].start - ROLL_BASE) * Math.log1p(h / ROLL_H0)) / Math.log1p(first / ROLL_H0)
-  let i = 1
-  while (i + 1 < ZONES.length && h >= GATE_REACH[i + 1]) i += 1
-  // Past the last gate, keep going at the last stage's pace.
-  const a = i + 1 < ZONES.length ? i : i - 1
-  const span = ZONES[a + 1].start - ZONES[a].start
-  return ZONES[i].start + (span * Math.log(h / GATE_REACH[i])) / Math.log(GATE_REACH[a + 1] / GATE_REACH[a])
+export function fillStage(water, world = 0) {
+  const stages = stagesOf(world)
+  let stage = 0
+  while (stage < LAST_STAGE && water >= stages[stage + 1].need) stage += 1
+  return stage
 }
 
-export function zoneIndexAt(meter) {
-  for (let i = ZONES.length - 1; i >= 0; i -= 1) {
-    if (meter >= ZONES[i].start) return i
+/** The furthest ledge you can get to now: your Water Power's, or further if you skipped. */
+export const reachStage = (profile) => Math.max(fillStage(profile.water, profile.world), profile.skipTo || 0)
+
+/** Whether you can fill pit `stage` at all: strong enough for it, or skipped. */
+export const canPour = (profile, stage) => stage <= reachStage(profile)
+
+/** Water a second you pour into a pit. */
+export const pourRate = (profile) => profile.water * POUR_RATE
+
+/**
+ * Seconds pit `stage` takes you to fill, from empty: its capacity over your pour rate
+ * (never under POUR_MIN_SECONDS), none if you skipped it, Infinity if you're too weak.
+ */
+export function pourSeconds(profile, stage) {
+  if (stage <= (profile.skipTo || 0)) return 0
+  if (!canPour(profile, stage)) return Infinity
+  return Math.max(POUR_MIN_SECONDS, stagesOf(profile.world)[stage].capacity / Math.max(1e-9, pourRate(profile)))
+}
+
+/** Seconds of pouring a run out to ledge `stage` takes you: every pit on the way. */
+export function runPourSeconds(profile, stage) {
+  let total = 0
+  for (let i = 1; i <= stage; i += 1) total += pourSeconds(profile, i)
+  return total
+}
+
+/**
+ * The ledge a run pays best for, Wins a second, for someone as strong as you: how far
+ * Auto Win goes, and a good aim for your own runs. (The furthest isn't always it: a pit
+ * that takes you a minute to fill may not be worth its Wins yet.)
+ */
+export function bestRunStage(profile) {
+  const stages = stagesOf(profile.world)
+  let best = 0
+  let bestRate = 0
+  let pouring = 0
+  const reach = reachStage(profile)
+  for (let s = 1; s <= reach; s += 1) {
+    pouring += pourSeconds(profile, s)
+    const rate = stages[s].wins / (runSeconds(s) + pouring)
+    if (rate > bestRate) {
+      bestRate = rate
+      best = s
+    }
   }
+  return best
+}
+
+/**
+ * The pit you're filling this run, as the session keeps it: `open` is the furthest pit
+ * filled since you set out from the lobby, `pour` how full the next one is (0-1).
+ * Pits stay full until you're back in the lobby; then every run starts dry.
+ */
+export const createRun = () => ({ open: 0, pour: 0 })
+
+/**
+ * Pours for `dt` seconds into pit `run.open + 1` (if you can fill it). Returns the
+ * stage that's just filled up, or 0.
+ */
+export function pourInto(run, profile, dt) {
+  const stage = run.open + 1
+  if (stage > LAST_STAGE || !canPour(profile, stage)) return 0
+  const seconds = pourSeconds(profile, stage)
+  run.pour = seconds <= 0 ? 1 : run.pour + dt / seconds
+  if (run.pour < 1) return 0
+  run.open = stage
+  run.pour = 0
+  return stage
+}
+
+/**
+ * Claims the Wins pad on ledge `stage`, which ends the run - `open` being the furthest
+ * pit filled on it (by default, the furthest you could fill). Pays the stage's Wins
+ * (times the x2 Wins pass and potion) and, the first time you reach a ledge in this
+ * world, the first-visit prize of every ledge up to it - and opens the chest of any
+ * Mega Pit among them.
+ */
+export function applyClaim(profile, stage, now, open = reachStage(profile)) {
+  const index = Math.floor(Number(stage))
+  if (!Number.isInteger(index) || index < 1 || index > LAST_STAGE) return { ok: false, error: 'No Wins here' }
+  if (index > open) return { ok: false, error: 'Fill the pit first!' }
+  const world = profile.world
+  const stages = stagesOf(world)
+  const multiplier = winsMultiplier(profile, now)
+  const wins = Math.max(1, Math.round(stages[index].wins * multiplier))
+  const bestKey = world === 1 ? 'bestStage2' : 'bestStage'
+  const discovered = []
+  const chests = []
+  let prize = 0
+  for (let i = profile.stats[bestKey] + 1; i <= index; i += 1) {
+    discovered.push(i)
+    prize += stages[i].discover
+    // A Mega Pit's ledge: its treasure chest opens, the first time.
+    const chest = MEGA_CHESTS[world]?.[i]
+    if (chest) {
+      addItem(profile, chest.item, chest.amount)
+      chests.push({ stage: i, ...chest })
+    }
+  }
+  const best = index > profile.stats[bestKey]
+  earnWins(profile, wins + prize, now)
+  profile.stats.runs += 1
+  profile.stats[bestKey] = Math.max(profile.stats[bestKey], index)
+  return { ok: true, stage: index, wins, prize, discovered, chests, multiplier, best }
+}
+
+/** A helper's tip, for helping someone fill pit `stage` (in their shared world). */
+export function applyCoopTip(profile, stage, now) {
+  if (!Number.isInteger(stage) || stage < 1 || stage > LAST_STAGE) return { ok: false }
+  const wins = Math.max(1, Math.round(stagesOf(profile.world)[stage].wins * CO_OP_TIP))
+  earnWins(profile, wins, now)
+  return { ok: true, wins }
+}
+
+/**
+ * How far you've got across both worlds, as one number for leaderboards and name tags:
+ * World 1's stage (1-59), then 59 + World 2's once you're there (60-118).
+ */
+export const overallStage = (stats) => ((stats?.bestStage2 || 0) > 0 ? LAST_STAGE + stats.bestStage2 : stats?.bestStage || 0)
+
+/** Wins earned this week (weekOf `now`), for the weekly board: 0 once the week has turned. */
+export const weekWins = (profile, now) => (profile.weekly?.week === weekOf(now) ? profile.weekly.wins : 0)
+
+// --- Weekly board -------------------------------------------------------------------
+
+/** The week (Monday 00:00 UTC to the next) at `now`. */
+export const weekOf = (now) => Math.floor((now - 4 * DAILY_INTERVAL_MS) / (7 * DAILY_INTERVAL_MS))
+
+/**
+ * Banks Wins you've earned playing (a Wins pad, a coin): your Wins, your total and this
+ * week's, for the weekly board - starting a new week if it's turned, the last one kept.
+ */
+export function earnWins(profile, amount, now) {
+  profile.wins += amount
+  profile.stats.totalWins += amount
+  const week = weekOf(now)
+  if (profile.weekly.week !== week) {
+    if (profile.weekly.wins > 0) profile.weekly.prev = { week: profile.weekly.week, wins: profile.weekly.wins }
+    profile.weekly.week = week
+    profile.weekly.wins = 0
+  }
+  profile.weekly.wins += amount
+}
+
+/** What you earned in week `week`, as far as your save knows (this week's or the last). */
+export function winsInWeek(profile, week) {
+  if (profile.weekly.week === week) return profile.weekly.wins
+  if (profile.weekly.prev.week === week) return profile.weekly.prev.wins
   return 0
 }
 
-/**
- * Where a tire with `health` ends up: rolling up to its reach and smashing every wall
- * on the way it's strong enough for, or stopped dead (WALL_STOP short) by the first
- * one it isn't. `blocked` is that wall's zone index (-1 if none); `broken` how many
- * walls it smashed.
- */
-export function rollOutcome(health) {
-  const reach = rollReach(health)
-  let broken = 0
-  for (let i = 1; i < ZONES.length; i += 1) {
-    const zone = ZONES[i]
-    if (zone.start > reach) break
-    if (health < zone.wall) return { distance: zone.start - WALL_STOP, blocked: i, broken, reach }
-    broken += 1
-  }
-  return { distance: reach, blocked: -1, broken, reach }
+/** The reward for finishing week `week` at `rank` (1 = top), once: `{ item, amount }`, or null. */
+export function applyWeeklyReward(profile, week, rank) {
+  const reward = WEEKLY_REWARDS.find((r) => rank >= 1 && rank <= r.upTo)
+  if (!reward || profile.weekly.rewarded >= week || winsInWeek(profile, week) <= 0) return null
+  profile.weekly.rewarded = week
+  addItem(profile, reward.item, reward.amount)
+  return reward
 }
 
-/** Metres of every trophy within `distance`. */
-export function trophiesWithin(distance) {
-  const out = []
-  for (let m = TROPHY_FIRST; m <= distance; m += TROPHY_SPACING) out.push(m)
-  return out
+/** Wins one of ledge `stage`'s coins pays you (with the x2 Wins pass and potion). */
+export const coinWins = (profile, stage, now) => Math.max(1, Math.round(stagesOf(profile.world)[stage].wins * COIN_SHARE * winsMultiplier(profile, now)))
+
+/** Picks up one of ledge `stage`'s coins (the session checks you're touching it). */
+export function applyCoin(profile, stage, now) {
+  if (!Number.isInteger(stage) || stage < 1 || stage > LAST_STAGE) return { ok: false }
+  const wins = coinWins(profile, stage, now)
+  earnWins(profile, wins, now)
+  return { ok: true, wins }
 }
 
-/** Wins the trophy at `meter` is worth in `world`, before multipliers. */
-export const trophyValue = (meter, world = 0) => Math.max(1, Math.round(zonesOf(world)[zoneIndexAt(meter)].winsPerMeter * TROPHY_METERS))
+/** Wins to have the Skip pad fill pit `stage` for you (in the world you're in). */
+export const skipPrice = (profile, stage) => niceRound(SKIP_RUNS * stagesOf(profile.world)[Math.min(LAST_STAGE, Math.max(1, stage))].wins)
 
 /**
- * Wins for a roll in `world` before multipliers: metres in each zone, trophies and
- * smashed walls. (All worlds' stages start at the same metres; only what they pay differs.)
+ * The Skip pad on the ledge before pit `stage`: fills it for you - and every pit before
+ * it - at once, on every run, until you rebirth or change worlds. Whether you're too
+ * weak for it or would just rather not wait.
  */
-export function baseRollWins(distance, world = 0) {
-  const zones = zonesOf(world)
-  let wins = 0
-  for (let i = 0; i < zones.length; i += 1) {
-    const start = zones[i].start
-    const end = i + 1 < zones.length ? zones[i + 1].start : Infinity
-    const metres = Math.max(0, Math.min(distance, end) - start)
-    wins += metres * zones[i].winsPerMeter
-    if (i > 0 && distance >= start) wins += zones[i].smash
-  }
-  for (let m = TROPHY_FIRST; m <= distance; m += TROPHY_SPACING) wins += trophyValue(m, world)
-  return wins
+export function applySkip(profile, stage) {
+  const index = Math.floor(Number(stage))
+  if (!Number.isInteger(index) || index < 1 || index > LAST_STAGE) return { ok: false, error: 'Nothing to skip' }
+  if (index <= (profile.skipTo || 0)) return { ok: false, error: 'Already skipped!' }
+  const price = skipPrice(profile, index)
+  if (profile.wins < price) return { ok: false, error: 'Not enough Wins!' }
+  profile.wins -= price
+  profile.skipTo = index
+  profile.stats.skips += 1
+  return { ok: true, stage: index, price }
 }
 
-/** Wins a roll at `health` pays in `world` before multipliers. */
-export const rollWinsAt = (health, world = 0) => baseRollWins(rollOutcome(health).distance, world)
+/** Wins (before multipliers) of a run as far as `water` fills, in `world`. */
+export const runWinsAt = (water, world = 0) => stagesOf(world)[fillStage(water, world)].wins
+
+/** Wins (before multipliers) of a run at your max level: what packs and skips cost in. */
+export const maxRunWins = (profile) => Math.max(1, runWinsAt(waterForLevel(levelCap(profile.rebirths)), profile.world))
 
 /**
- * A roll down the track. Health is not consumed. Returns everything the client needs
- * to replay it locally: distance, duration, the wall that stopped it, the Wins earned
- * (trophy positions follow from the distance) and any zone reached for the first time.
+ * The Water packs as they stand for you now: `[{ amount, price }]`. Both follow the
+ * Water your next level needs, and the Wins a run with that much Water pays.
  */
-export function applyRoll(profile, now) {
-  const outcome = rollOutcome(profile.health)
-  const distance = Math.round(outcome.distance * 10) / 10
-  const multiplier = winsMultiplier(profile, now)
-  const world = profile.world
-  const wins = Math.max(1, Math.round(baseRollWins(distance, world) * multiplier))
-  // First time into a zone: its discovery prize, paid once ever (once in each world).
-  const zone = zoneIndexAt(distance)
-  const bestKey = world === 1 ? 'bestZone2' : 'bestZone'
-  const discovered = []
-  let prize = 0
-  for (let i = profile.stats[bestKey] + 1; i <= zone; i += 1) {
-    discovered.push(i)
-    prize += WORLD_ZONES[world][i].discover
-  }
-  const best = distance > profile.stats.bestDistance
-  profile.wins += wins + prize
-  profile.stats.totalWins += wins + prize
-  profile.stats.rolls += 1
-  profile.stats.wallsBroken += outcome.broken
-  profile.stats.bestDistance = Math.max(profile.stats.bestDistance, distance)
-  profile.stats[bestKey] = Math.max(profile.stats[bestKey], zone)
-  const duration = rollDuration(distance)
-  return {
-    ok: true,
-    distance,
-    wins,
-    prize,
-    discovered,
-    blocked: outcome.blocked,
-    broken: outcome.broken,
-    multiplier,
-    best,
-    duration,
-    cooldown: duration + ROLL_RECOVERY,
-  }
-}
-
-/** Wins (before multipliers) of a roll at your max level: what packs and skips cost in. */
-export const maxRollWins = (profile) => rollWinsAt(healthForLevel(levelCap(profile.rebirths)), profile.world)
-
-/**
- * The Health packs as they stand for you now: `[{ amount, price }]`. Both follow the
- * Health your next level needs, and the Wins a roll with that much Health pays.
- */
-export function healthPacks(profile) {
-  const next = healthForLevel(profile.level + 1)
-  const wins = rollWinsAt(next, profile.world)
-  return HEALTH_PACKS.map((pack) => ({
+export function waterPacks(profile) {
+  const next = waterForLevel(profile.level + 1)
+  const wins = Math.max(1, runWinsAt(next, profile.world))
+  return WATER_PACKS.map((pack) => ({
     amount: niceRound(Math.max(10, next * pack.share)),
-    price: niceRound(Math.max(3, wins * pack.rolls)),
+    price: niceRound(Math.max(3, wins * pack.runs)),
   }))
 }
 
-/** Buys Health pack `index` with Wins. Packs ignore the level cap. */
-export function buyHealthPack(profile, index) {
-  const pack = healthPacks(profile)[index]
+/** Buys Water pack `index` with Wins, up to your max level. */
+export function buyWaterPack(profile, index) {
+  const pack = waterPacks(profile)[index]
   if (!pack) return { ok: false, error: 'Unknown pack' }
+  if (isMaxLevel(profile)) return { ok: false, error: 'Max level - rebirth!' }
   if (profile.wins < pack.price) return { ok: false, error: 'Not enough Wins!' }
   profile.wins -= pack.price
-  profile.health = tidy(profile.health + pack.amount)
-  profile.stats.bestHealth = Math.max(profile.stats.bestHealth, profile.health)
-  profile.level = levelFor(profile.health, profile.rebirths)
-  return { ok: true, amount: pack.amount }
+  // Packs fill you up to your max level, never past it: that's rebirth's job.
+  const added = Math.min(pack.amount, Math.max(0, waterForLevel(levelCap(profile.rebirths)) - profile.water))
+  profile.water = tidy(profile.water + added)
+  profile.stats.bestWater = Math.max(profile.stats.bestWater, profile.water)
+  profile.level = levelFor(profile.water, profile.rebirths)
+  return { ok: true, amount: added }
 }
 
 /** Wins to rebirth now without reaching max level first. */
-export const rebirthSkipPrice = (profile) => niceRound(Math.max(20, maxRollWins(profile) * REBIRTH_SKIP_ROLLS))
+export const rebirthSkipPrice = (profile) => niceRound(Math.max(20, maxRunWins(profile) * REBIRTH_SKIP_RUNS))
 
 export function skipRebirth(profile) {
   if (isMaxLevel(profile)) return applyRebirth(profile)
@@ -437,49 +608,155 @@ export function skipRebirth(profile) {
 
 // --- Worlds -------------------------------------------------------------------------
 
+/** Whether World 2's portal lets you through: you've escaped World 1 (or been before). */
+export const world2Open = (profile) => profile.world2Unlocked || profile.stats.bestStage >= WORLD_PORTALS.world2.stage
+
 /**
  * Steps through the world portal: from World 1 into World 2 (opening it for good the
- * first time you hold enough Wins - they aren't spent), or from World 2 back home.
+ * first time, once you've escaped World 1), or from World 2 back home. Skipped pits
+ * stay behind in the world they were bought in.
  */
 export function usePortal(profile) {
   if (profile.world === 1) {
     profile.world = 0
+    profile.skipTo = 0
     return { ok: true, world: 0 }
   }
-  const need = WORLD_PORTALS.world2.wins
-  if (!profile.world2Unlocked && profile.wins < need) return { ok: false, error: `Need ${need} Wins`, need }
+  const need = WORLD_PORTALS.world2.stage
+  if (!world2Open(profile)) return { ok: false, error: `Escape World 1 first (stage ${need})`, need }
   const first = !profile.world2Unlocked
   profile.world2Unlocked = true
   profile.world = 1
+  profile.skipTo = 0
   return { ok: true, world: 1, first }
 }
 
-// --- Tires --------------------------------------------------------------------------
+// --- Cosmetics ----------------------------------------------------------------------
 
-export function buyTire(profile, tireId) {
-  const tire = TIRES.find((t) => t.id === tireId)
-  if (!tire) return { ok: false, error: 'Unknown tire' }
-  if (profile.ownedTires.includes(tireId)) return equipTire(profile, tireId)
-  const previous = TIRES[tireIndex(tireId) - 1]
-  if (previous && !profile.ownedTires.includes(previous.id)) {
-    return { ok: false, error: `Buy the ${previous.name} first!` }
+/**
+ * Buys cosmetic `id` of `kind` ('stream' or 'trail') with Wins and shows it - or, if you
+ * own it already, just shows it.
+ */
+export function buyCosmetic(profile, kind, id) {
+  const list = COSMETICS[kind]
+  const look = list?.[id]
+  if (!look) return { ok: false, error: 'Unknown' }
+  const owned = profile.cosmetics.owned.includes(id)
+  if (!owned) {
+    if (profile.wins < look.price) return { ok: false, error: 'Not enough Wins!' }
+    profile.wins -= look.price
+    profile.cosmetics.owned.push(id)
   }
-  if (profile.wins < tire.cost) return { ok: false, error: 'Not enough Wins!' }
-  profile.wins -= tire.cost
-  profile.ownedTires.push(tireId)
-  profile.equippedTire = tireId
-  return { ok: true, bought: true, tireId }
+  profile.cosmetics[kind] = id
+  return { ok: true, kind, id, bought: !owned }
 }
 
-export function equipTire(profile, tireId) {
-  if (!profile.ownedTires.includes(tireId)) return { ok: false, error: 'You don’t own that tire' }
-  profile.equippedTire = tireId
-  return { ok: true, equipped: true, tireId }
+// --- Daily quests ------------------------------------------------------------------
+
+/** The quest day (UTC) at `now`. */
+export const questDay = (now) => Math.floor(now / DAILY_INTERVAL_MS)
+
+/** Day `day`'s quests: QUESTS_PER_DAY of QUESTS, picked by the day itself (the same for everyone). */
+export function questsFor(day) {
+  const rand = mulberry32(day * 2654435761)
+  const pool = [...QUESTS]
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rand() * (i + 1))
+    ;[pool[i], pool[j]] = [pool[j], pool[i]]
+  }
+  return pool.slice(0, QUESTS_PER_DAY)
 }
 
-/** The next tire in the showroom you don't have yet, or null. */
-export function nextTire(profile) {
-  return TIRES.find((t) => !profile.ownedTires.includes(t.id)) || null
+/** Starts a new day's quests if the day has turned since. */
+function rollQuests(profile, now) {
+  const day = questDay(now)
+  if (profile.quests.day !== day) profile.quests = { day, progress: {}, bonus: false }
+}
+
+/** Today's quests as they stand for you: `[{ id, text, target, progress, done, reward }]`. */
+export function currentQuests(profile, now) {
+  const day = profile.quests?.day === questDay(now) ? profile.quests : { progress: {} }
+  return questsFor(questDay(now)).map((quest, i) => {
+    const progress = Math.min(quest.target, day.progress[quest.id] || 0)
+    return { ...quest, text: quest.text.replace('{n}', formatNumber(quest.target)), progress, done: progress >= quest.target, reward: QUEST_REWARDS[i] }
+  })
+}
+
+/**
+ * Counts `amount` towards today's quest of kind `kind`, if there is one: its reward the
+ * moment it's done, and the bonus for the last of them. Returns `{ changed, done, bonus }`
+ * - `done` the quest just finished (with its reward), if any.
+ */
+export function advanceQuest(profile, kind, amount, now) {
+  rollQuests(profile, now)
+  const quests = currentQuests(profile, now)
+  const quest = quests.find((q) => q.id === kind)
+  if (!quest || quest.done || amount <= 0) return { changed: false }
+  const progress = Math.min(quest.target, quest.progress + amount)
+  profile.quests.progress[kind] = progress
+  if (progress < quest.target) return { changed: true }
+  addItem(profile, quest.reward.item, quest.reward.amount)
+  let bonus = null
+  if (!profile.quests.bonus && quests.every((q) => q.done || q.id === kind)) {
+    profile.quests.bonus = true
+    addItem(profile, QUEST_BONUS.item, QUEST_BONUS.amount)
+    bonus = QUEST_BONUS
+  }
+  return { changed: true, done: { ...quest, progress }, bonus }
+}
+
+// --- Buckets ------------------------------------------------------------------------
+
+/**
+ * Buys bucket `bucketId` - any of them, in any order - and carries it if it's better
+ * than the one you have (a bucket you already own is just equipped).
+ */
+export function buyBucket(profile, bucketId) {
+  const bucket = BUCKETS.find((b) => b.id === bucketId)
+  if (!bucket) return { ok: false, error: 'Unknown bucket' }
+  if (profile.ownedBuckets.includes(bucketId)) return equipBucket(profile, bucketId)
+  if (profile.wins < bucket.cost) return { ok: false, error: 'Not enough Wins!' }
+  profile.wins -= bucket.cost
+  profile.ownedBuckets.push(bucketId)
+  const better = bucketPower(profile, bucketId) > bucketPower(profile, profile.equippedBucket)
+  if (better) profile.equippedBucket = bucketId
+  return { ok: true, bought: true, bucketId, equipped: better }
+}
+
+/** Wins for the next star on bucket `bucketId`, or null when it has them all. */
+export function nextStarPrice(profile, bucketId) {
+  const stars = bucketStars(profile, bucketId)
+  const index = bucketIndex(bucketId)
+  return stars >= maxStars(index) ? null : starPrice(index, stars + 1)
+}
+
+/** Upgrades bucket `bucketId` (one you own) by a star: x STAR_POWER on its power. */
+export function upgradeBucket(profile, bucketId) {
+  if (!profile.ownedBuckets.includes(bucketId)) return { ok: false, error: 'Buy it first!' }
+  const price = nextStarPrice(profile, bucketId)
+  if (price === null) return { ok: false, error: 'Fully upgraded!' }
+  if (profile.wins < price) return { ok: false, error: 'Not enough Wins!' }
+  profile.wins -= price
+  profile.bucketStars = { ...profile.bucketStars, [bucketId]: bucketStars(profile, bucketId) + 1 }
+  return { ok: true, bucketId, stars: profile.bucketStars[bucketId], price }
+}
+
+export function equipBucket(profile, bucketId) {
+  if (!profile.ownedBuckets.includes(bucketId)) return { ok: false, error: 'You don’t own that bucket' }
+  profile.equippedBucket = bucketId
+  return { ok: true, equipped: true, bucketId }
+}
+
+/** The cheapest bucket in the shop you don't have yet, or null. */
+export function nextBucket(profile) {
+  return BUCKETS.find((b) => !profile.ownedBuckets.includes(b.id)) || null
+}
+
+/** The best bucket you own (with its stars). */
+export function bestOwnedBucket(profile) {
+  let best = profile.ownedBuckets[0]
+  for (const id of profile.ownedBuckets) if (bucketPower(profile, id) > bucketPower(profile, best)) best = id
+  return best
 }
 
 // --- Pets --------------------------------------------------------------------------
@@ -539,12 +816,27 @@ export function unequipPet(profile, uid) {
   return { ok: true }
 }
 
-const petScore = (pet) => PETS[pet.id]?.mult ?? 0
+const petScore = (pet) => petMult(pet)
 
 export function equipBestPets(profile) {
   const best = [...profile.pets].sort((a, b) => petScore(b) - petScore(a)).slice(0, MAX_EQUIPPED_PETS)
   profile.equippedPets = best.map((p) => p.uid)
   return { ok: true }
+}
+
+/**
+ * Fuses GOLDEN_FUSE of your `petId` pets (not golden ones; the ones you aren't using
+ * first) into one Golden pet, which takes a free slot if there is one.
+ */
+export function fusePets(profile, petId) {
+  const plain = profile.pets.filter((p) => p.id === petId && !p.golden)
+  if (!PETS[petId] || plain.length < GOLDEN_FUSE) return { ok: false, error: `Need ${GOLDEN_FUSE} of them` }
+  const inUse = (p) => (profile.equippedPets.includes(p.uid) ? 1 : 0)
+  for (const p of [...plain].sort((a, b) => inUse(a) - inUse(b)).slice(0, GOLDEN_FUSE)) deletePet(profile, p.uid)
+  const pet = { uid: profile.nextPetUid++, id: petId, golden: true }
+  profile.pets.push(pet)
+  if (profile.equippedPets.length < MAX_EQUIPPED_PETS) profile.equippedPets.push(pet.uid)
+  return { ok: true, pet }
 }
 
 export function deletePet(profile, uid) {
@@ -558,7 +850,7 @@ export function deletePet(profile, uid) {
 export function petSortKey(profile, pet) {
   const info = PETS[pet.id]
   const equipped = profile.equippedPets.includes(pet.uid) ? 1 : 0
-  return equipped * 1e6 + (RARITIES[info.rarity]?.order ?? 0) * 1e4 + info.mult
+  return equipped * 1e6 + (RARITIES[info.rarity]?.order ?? 0) * 1e4 + petMult(pet)
 }
 
 // --- Items & boosts ---------------------------------------------------------------
@@ -577,17 +869,17 @@ export function usePotion(profile, itemId, now) {
   return { ok: true, boost: item.boost, endsAt: profile.boosts[item.boost] }
 }
 
-/** Applies a reward grant: { wins } | { item } | { pet } | { health } | { hatch }. */
+/** Applies a reward grant: { wins } | { item } | { pet } | { water } | { hatch }. */
 export function applyGrant(profile, grant, { rand = Math.random } = {}) {
   const result = { ok: true }
   if (grant.wins) {
     profile.wins += grant.wins
     profile.stats.totalWins += grant.wins
   }
-  if (grant.health) {
-    profile.health = tidy(profile.health + grant.health)
-    profile.stats.bestHealth = Math.max(profile.stats.bestHealth, profile.health)
-    profile.level = levelFor(profile.health, profile.rebirths)
+  if (grant.water) {
+    profile.water = tidy(profile.water + grant.water)
+    profile.stats.bestWater = Math.max(profile.stats.bestWater, profile.water)
+    profile.level = levelFor(profile.water, profile.rebirths)
   }
   if (grant.item) addItem(profile, grant.item, grant.amount || 1)
   if (grant.pet) result.pets = [addPet(profile, grant.pet)]
@@ -670,8 +962,8 @@ export function buyShopItem(profile, productId, opts = {}) {
   if (item.kind === 'pass') {
     profile.wins -= item.price
     profile.passes[productId] = true
-    // Auto Roll switches itself on once bought.
-    if (productId === 'autoRoll') profile.settings.autoRoll = true
+    // Auto Win switches itself on once bought.
+    if (productId === 'autoWin') profile.settings.autoWin = true
     return { ok: true, productId, pass: true }
   }
   const result = applyGrant(profile, item.grant || {}, opts)
@@ -692,14 +984,14 @@ export function applyGemProduct(profile, sku) {
   const result = { ok: true, sku, name: product.name }
   if (grant.pass) {
     if (profile.passes[grant.pass]) {
-      result.wins = Math.max(10, Math.round(maxRollWins(profile) * 20))
+      result.wins = Math.max(10, Math.round(maxRunWins(profile) * 20))
     } else {
       profile.passes[grant.pass] = true
-      if (grant.pass === 'autoRoll') profile.settings.autoRoll = true
+      if (grant.pass === 'autoWin') profile.settings.autoWin = true
       result.pass = grant.pass
     }
   }
-  if (grant.winsRolls) result.wins = (result.wins || 0) + Math.max(25, Math.round(maxRollWins(profile) * grant.winsRolls))
+  if (grant.winsRuns) result.wins = (result.wins || 0) + Math.max(25, Math.round(maxRunWins(profile) * grant.winsRuns))
   if (result.wins) {
     profile.wins += result.wins
     profile.stats.totalWins += result.wins
@@ -720,17 +1012,17 @@ export function applyAdReward(profile, session, placement, now) {
 
 // --- Offline progress -------------------------------------------------------------
 
-/** Health earned while away, if the player logged off on a training pad. */
+/** Water scooped while away, if the player logged off standing in a well. */
 export function applyOfflineProgress(profile, now) {
   const away = Math.min(OFFLINE_MAX_MS, now - (profile.lastSeen || now))
-  if (profile.lastPad < 0 || away < OFFLINE_MIN_MS) return null
-  if (!isPadUnlocked(profile, profile.lastPad) || isMaxLevel(profile)) return null
+  if (profile.lastWell < 0 || away < OFFLINE_MIN_MS) return null
+  if (!isWellUnlocked(profile, profile.lastWell) || isMaxLevel(profile)) return null
   const steps = Math.floor(away / 1000 / TRAIN_INTERVAL)
   // Potions don't run while you're away.
-  const gain = padGain(profile, profile.lastPad, 0)
-  const result = addHealth(profile, Math.floor(steps * gain * OFFLINE_RATE))
+  const gain = wellGain(profile, profile.lastWell, 0)
+  const result = addWater(profile, Math.floor(steps * gain * OFFLINE_RATE))
   if (result.gain <= 0) return null
-  return { health: result.gain, ms: away }
+  return { water: result.gain, ms: away }
 }
 
 // --- Tutorial & badges ------------------------------------------------------------
@@ -739,7 +1031,7 @@ export function applyOfflineProgress(profile, now) {
 export function advanceTutorial(profile, event) {
   const step = TUTORIAL[profile.tutorialStep]
   if (!step || step.event !== event) return false
-  if (step.health && profile.health < step.health) return false
+  if (step.water && profile.water < step.water) return false
   profile.tutorialStep += 1
   return true
 }

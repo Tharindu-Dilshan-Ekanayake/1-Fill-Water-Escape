@@ -9,25 +9,25 @@ import {
 } from 'three'
 
 import {
+  COURSE_HALF_WIDTH,
+  COURSE_START_Z,
   EGG_STANDS,
   FREE_REWARD,
   LEADERBOARDS,
-  PAD_COUNT,
-  PAD_RADIUS,
-  PAD_X,
-  padCenterZ,
   PORTALS,
-  ROLL_ZONE,
   SHOP,
-  TRACK_START_Z,
   WATERFALL,
+  WELL_COUNT,
+  WELL_RADIUS,
+  WELL_X,
+  wellCenterZ,
 } from '@shared/world'
 
 import { PALETTE } from '../sceneStyle'
 
 /**
  * The plaza floor: one big plane whose colours come from a tiny "ground map" texture
- * painted at one texel per world unit. Paths, aprons and pads are rectangles painted
+ * painted at one texel per world unit. Paths, aprons and wells are rectangles painted
  * into it, so their edges always fall on the stud-tile seams, and the whole floor is a
  * single draw call regardless of how many painted regions it has.
  */
@@ -36,8 +36,8 @@ const MAP = { minX: -64, maxX: 64, minZ: -44, maxZ: 48 }
 const MAP_W = MAP.maxX - MAP.minX
 const MAP_H = MAP.maxZ - MAP.minZ
 
-/** Where the ground plane ends to the north: the track's own floor takes over there. */
-export const GROUND_NORTH_EDGE = TRACK_START_Z
+/** Where the ground plane ends to the north: the course's own floor takes over there. */
+export const GROUND_NORTH_EDGE = COURSE_START_Z
 
 function painter(ctx) {
   const rect = (r, color) => {
@@ -75,20 +75,21 @@ export function createGroundMap(maxTexture) {
 
   rect(MAP, PALETTE.plaza)
 
-  // The pads' apron along the west side, under them.
-  const padsMinZ = padCenterZ(PAD_COUNT - 1) - PAD_RADIUS - 2.5
-  const padsMaxZ = padCenterZ(0) + PAD_RADIUS + 2.5
-  const padsEast = PAD_X + PAD_RADIUS + 2.5
-  bordered({ minX: PAD_X - PAD_RADIUS - 2.5, maxX: padsEast, minZ: padsMinZ, maxZ: padsMaxZ }, PALETTE.apron, PALETTE.apronEdge)
+  // The wells' apron along the west side, under them.
+  const wellsMinZ = wellCenterZ(WELL_COUNT - 1) - WELL_RADIUS - 2.5
+  const wellsMaxZ = wellCenterZ(0) + WELL_RADIUS + 2.5
+  const wellsEast = WELL_X + WELL_RADIUS + 2.5
+  bordered({ minX: WELL_X - WELL_RADIUS - 2.5, maxX: wellsEast, minZ: wellsMinZ, maxZ: wellsMaxZ }, PALETTE.apron, PALETTE.apronEdge)
 
-  // Paths: a walkway along the pads, spawn up to the roll zone, spawn to the pads, the
-  // showroom, the eggs over to the Sphinx, and a spur up to the portal from the
-  // showroom path.
+  // Paths: a walkway along the wells, spawn up to the course, spawn to the wells, the
+  // bucket shop, the eggs over to the Sphinx, and a spur up to the portal from the
+  // shop path.
   const eggsZ = EGG_STANDS[0].z
+  const apronZ = COURSE_START_Z + 8
   const paths = [
-    { minX: padsEast, maxX: padsEast + 5, minZ: padsMinZ, maxZ: padsMaxZ },
-    { minX: -5, maxX: 5, minZ: ROLL_ZONE.maxZ, maxZ: 16 },
-    { minX: padsEast + 5, maxX: -5, minZ: 11, maxZ: 17 },
+    { minX: wellsEast, maxX: wellsEast + 5, minZ: wellsMinZ, maxZ: wellsMaxZ },
+    { minX: -5, maxX: 5, minZ: apronZ, maxZ: 16 },
+    { minX: wellsEast + 5, maxX: -5, minZ: 11, maxZ: 17 },
     { minX: 5, maxX: SHOP.minX + 1, minZ: -12, maxZ: -6 },
     { minX: 16, maxX: 46, minZ: eggsZ - 2, maxZ: eggsZ + 2 },
     ...PORTALS.map((p) => ({ minX: p.x - 3, maxX: p.x + 3, minZ: p.z + 3, maxZ: -12 })),
@@ -99,8 +100,9 @@ export function createGroundMap(maxTexture) {
     rect({ minX: p.minX + 1, maxX: p.maxX - 1, minZ: p.minZ + 1, maxZ: p.maxZ - 1 }, PALETTE.path)
   }
   bordered({ minX: -9, maxX: 9, minZ: 7, maxZ: 21 }, PALETTE.path, PALETTE.pathEdge)
-  // A paved apron in front of the roll zone.
-  bordered({ minX: ROLL_ZONE.minX - 5, maxX: ROLL_ZONE.maxX + 5, minZ: TRACK_START_Z, maxZ: ROLL_ZONE.maxZ + 6 }, PALETTE.apron, PALETTE.apronEdge)
+  // A sandy apron before the mouth of the course (not the pale blue of the others: by
+  // the pits' pool tiles that would read as water).
+  bordered({ minX: -COURSE_HALF_WIDTH - 5, maxX: COURSE_HALF_WIDTH + 5, minZ: COURSE_START_Z, maxZ: apronZ }, PALETTE.path, PALETTE.pathEdge)
 
   // Egg plaza and the shop yard.
   bordered({ minX: -18, maxX: 18, minZ: eggsZ - 4, maxZ: LEADERBOARDS[0].z - 1 }, PALETTE.apron, PALETTE.apronEdge)

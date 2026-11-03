@@ -2,6 +2,8 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
 import { Vector3 } from 'three'
 
+import { COURSE_HALF_WIDTH, COURSE_START_Z } from '@shared/world'
+
 import { getBloxityState } from '../bloxity/store'
 import { placeLocalBubble } from './remote/nameplates'
 import { runtime } from './runtime'
@@ -21,6 +23,9 @@ const DRAG_SENSITIVITY = 0.005
 const TOUCH_SENSITIVITY = 0.007
 const ZOOM_SENSITIVITY = 0.012
 
+/** How far from the course's centre line the camera may go: just inside its walls. */
+const CAMERA_X = COURSE_HALF_WIDTH - 0.8
+
 // Higher = snappier. Framerate-independent via the exp() smoothing below.
 const POSITION_SMOOTHING = 10
 const LOOK_SMOOTHING = 14
@@ -34,8 +39,7 @@ const _target = new Vector3()
  * Mouse: drag (either button) orbits, wheel zooms. Touch: one-finger drag orbits (the
  * joystick owns the left side of the screen as a separate element), pinch zooms.
  *
- * Orbit state lives in `runtime.camera`, so the roll can hand the camera
- * back exactly where it took it from. Drag speed is scaled by the player's Boxity
+ * Orbit state lives in `runtime.camera`. Drag speed is scaled by the player's Boxity
  * camera_sensitivity setting. Also places your own chat bubble each frame, once the
  * camera has moved (it needs the final camera to project).
  */
@@ -140,7 +144,10 @@ export function FollowCamera() {
       _target.z + Math.cos(yaw) * horizontal,
     )
 
-    // After a slide the camera is far down the hill; jump back rather than swoop.
+    // Out on the course, stay between its walls rather than swing out through them.
+    if (p.z < COURSE_START_Z) _desired.x = Math.max(-CAMERA_X, Math.min(CAMERA_X, _desired.x))
+
+    // Sent home from the course: jump there rather than swoop.
     if (runtime.camera.snap) {
       runtime.camera.snap = false
       initialised.current = false

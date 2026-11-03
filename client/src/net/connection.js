@@ -61,7 +61,7 @@ async function findDevServer() {
   for (const port of DEV_PORTS) candidates.push(`${window.location.protocol}//${window.location.hostname}:${port}`)
   for (const url of new Set(candidates)) {
     const health = await healthOf(url)
-    if (health?.ok && health.game === 'tire') return url
+    if (health?.ok && health.game === 'water') return url
   }
   return null
 }
@@ -224,13 +224,6 @@ function attachRoom(room, identity, Callbacks, endpoint, gen) {
         break
       case 'leaderboards':
         getGame().setLeaderboards(payload)
-        break
-      case 'ghostRoll':
-        // Never your own roll (your tire is drawn already), and only rolls down your
-        // world's track.
-        if (payload.sid === room.sessionId) break
-        if ((payload.world || 0) !== (getGame().profile.world || 0)) break
-        runtime.ghostRolls.set(payload.sid, { ...payload, startedAt: performance.now() })
         break
       case 'kicked':
         leaving = true

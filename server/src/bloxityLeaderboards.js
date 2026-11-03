@@ -1,3 +1,4 @@
+import { overallStage, weekWins } from '../../shared/logic.js'
 import { apiUrl, bloxity } from './bloxityEnv.js'
 import { postJson } from './bloxityApi.js'
 import { activePlayers } from './registry.js'
@@ -20,23 +21,29 @@ import { activePlayers } from './registry.js'
 export const BLOXITY_LEADERBOARDS = [
   { id: 'rebirths', label: 'Rebirths', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
   { id: 'wins', label: 'Total Wins', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
-  { id: 'distance', label: 'Longest Roll (m)', order: 'desc', mode: 'best', format: 'compact', reset: 'none' },
+  { id: 'stage', label: 'Best Stage', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
   { id: 'playtime', label: 'Minutes Played', order: 'desc', mode: 'best', format: 'number', reset: 'none' },
+  // The in-game weekly board's (WEEKLY_REWARDS): Wins from pads and coins since Monday 00:00 UTC.
+  { id: 'wins_week', label: 'Wins This Week', order: 'desc', mode: 'best', format: 'compact', reset: 'weekly' },
 ]
 
 const REPORT_MS = 20_000
 /** Boxity takes at most this many scores per call. */
 export const MAX_SCORES_PER_REPORT = 200
 
-/** A profile's score on each board, as whole numbers: `{ rebirths, wins, distance, playtime }`. */
-export function leaderboardScores(profile) {
+/**
+ * A profile's score on each board, as whole numbers: `{ rebirths, wins, stage, playtime,
+ * wins_week }`. `stage` runs on through World 2 (overallStage).
+ */
+export function leaderboardScores(profile, now = Date.now()) {
   const stats = profile.stats || {}
   const whole = (n) => (Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0)
   return {
     rebirths: whole(profile.rebirths),
     wins: whole(stats.totalWins),
-    distance: whole(stats.bestDistance),
+    stage: whole(overallStage(stats)),
     playtime: whole((stats.playtime || 0) / 60),
+    wins_week: whole(weekWins(profile, now)),
   }
 }
 

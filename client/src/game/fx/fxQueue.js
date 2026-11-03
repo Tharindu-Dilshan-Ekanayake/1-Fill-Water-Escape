@@ -23,11 +23,14 @@ const bursts = []
  * Queues a confetti burst at (x, y, z). Dropped by the particle system on presets
  * without particles.
  *
+ * `drops: true` throws water droplets instead of confetti: small, stretched along their
+ * flight, not spinning, flung up `speed` and out `spread` times that sideways.
+ *
  * @param {{ x: number, y: number, z: number, count?: number, speed?: number,
- *           palette?: 'confetti' | 'gold' | 'power' | 'wood' }} burst
+ *           palette?: 'confetti' | 'gold' | 'power' | 'water', drops?: boolean, spread?: number }} burst
  */
-export function burst({ x, y, z, count = 30, speed = 7, palette = 'confetti' }) {
-  bursts.push({ x, y, z, count, speed, palette })
+export function burst({ x, y, z, count = 30, speed = 7, palette = 'confetti', drops = false, spread = 0.6 }) {
+  bursts.push({ x, y, z, count, speed, palette, drops, spread })
   if (bursts.length > MAX_BURSTS) bursts.shift()
 }
 

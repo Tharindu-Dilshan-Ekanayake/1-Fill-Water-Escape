@@ -3,7 +3,7 @@ import { PlayerSession } from '@shared/session'
 
 import { runtime } from '../game/runtime'
 
-const SAVE_KEY = 'tr.save.v1'
+const SAVE_KEY = 'fwe.save.v1'
 const TICK_MS = 100
 const SAVE_MS = 5000
 
@@ -35,6 +35,8 @@ export function createLocalServer({ id, name, onEvent }) {
     // would never see a change (same reference) and could edit server state.
     emit: (type, payload) => onEvent(type, payload ? structuredClone(payload) : payload),
     getPosition: () => runtime.player.position,
+    // Back to the lobby after a claim: no server to move us, so straight there.
+    onTeleport: (to) => onEvent('teleport', { x: to.x, y: 0, z: to.z }),
   })
 
   const save = () => {

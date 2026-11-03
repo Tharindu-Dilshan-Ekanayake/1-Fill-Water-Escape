@@ -3,7 +3,7 @@
  * One decimal below 10 of a unit, whole numbers above, trailing ".0" dropped.
  */
 
-const UNITS = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc']
+const UNITS = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc', 'Ud', 'Dd', 'Td', 'Qd', 'Qn', 'Sd', 'St', 'Od', 'Nd', 'Vg']
 
 export function formatNumber(value) {
   if (!Number.isFinite(value)) return '∞'

@@ -9,17 +9,19 @@ const BANNER_GRADIENT = 'linear-gradient(180deg, #fff6a8 0%, #ffd52a 45%, #ffa00
 const PANEL_GRADIENT = 'linear-gradient(180deg, #ffe45c 0%, #ffc21f 55%, #ff9a12 100%)'
 
 /**
- * The tutorial for brand-new players: train, roll, buy a tire - then it's gone for good.
- * A small strip, "1/3" and the step with its progress ("(16/30)"), so the world stays in
- * view; the 3D arrows (TutorialArrows) show where to go.
+ * The tutorial for brand-new players: scoop Water, fill the pits and grab a Wins pad,
+ * buy a bucket - then it's gone for good. A small strip, "1/3" and the step with its
+ * progress ("(16/30)"), so the world stays in view; the 3D arrows (TutorialArrows) show
+ * where to go.
  */
 function TutorialBanner({ step }) {
   const current = TUTORIAL[step]
-  const health = useGame((s) => s.profile.health)
-  const onZone = useGame((s) => s.zone.rollZone)
+  const water = useGame((s) => s.profile.water)
+  // Out on the course, the next thing to do is right there: the Wins pad.
+  const onCourse = useGame((s) => s.zone.stage >= 1)
   let text = current.text
-  if (current.health) text += ` (${formatNumber(Math.min(health, current.health))}/${formatNumber(current.health)})`
-  if (current.event === 'roll' && onZone) text = 'Press ROLL!'
+  if (current.water) text += ` (${formatNumber(Math.min(water, current.water))}/${formatNumber(current.water)})`
+  if (current.event === 'claim' && onCourse) text = 'Grab the Wins pad on the furthest ledge you reach!'
   return (
     <div
       className="flex items-center"

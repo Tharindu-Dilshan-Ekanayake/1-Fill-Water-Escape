@@ -25,7 +25,7 @@ function Boosts() {
   const boosts = useGame((s) => s.profile.boosts)
   const now = useNow(1000)
   const active = [
-    ['potionHealth', boosts.health],
+    ['potionWater', boosts.water],
     ['potionWins', boosts.wins],
   ].filter(([, end]) => end > now)
   if (active.length === 0) return null
@@ -43,7 +43,7 @@ function Boosts() {
 
 /** Top-left, as in the reference: Rebirths, then Wins, with any running potions under them. */
 export function StatsPanel() {
-  const wins = useGame((s) => s.profile.wins - s.pendingWins)
+  const wins = useGame((s) => s.profile.wins)
   const rebirths = useGame((s) => s.profile.rebirths)
 
   return (

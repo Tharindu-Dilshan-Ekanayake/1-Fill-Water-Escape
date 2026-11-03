@@ -1,36 +1,38 @@
 /**
  * Every tunable number in the game. Rules live in logic.js; this file is only data,
  * so balancing never means touching code. `scripts/balance-sim.mjs` plays the game
- * with these numbers and prints the pacing (time to each rebirth, tire and zone).
+ * with these numbers and prints the pacing (time to each rebirth, bucket and stage).
  *
  * Shared by client (display) and server (authority): both always agree on costs and
  * multipliers because they read the same table.
  *
- * The loop: train on a pad for Health -> roll your tire (more Health rolls further and
- * smashes tougher walls) -> Wins -> better tires, eggs and pads -> rebirth at max
- * level for a bigger Health multiplier and a higher cap -> roll further still.
+ * The loop: scoop Water at a well -> run the escape course, pouring your Water into
+ * each pit until one is too deep to fill -> claim the Wins pad on the furthest ledge
+ * you reached -> better buckets, eggs and wells -> rebirth at max level for a bigger
+ * Water multiplier and a higher cap -> fill deeper pits still.
  */
 
-// --- Health and levels --------------------------------------------------------------
+// --- Water and levels ---------------------------------------------------------------
 
-/** Seconds between gains while standing on a training pad. */
+/** Seconds between the scoops a well gives by itself, while you stand in it. */
 export const TRAIN_INTERVAL = 0.6
-/** Seconds between the "+N" gains your tire earns while it rolls. */
-export const ROLL_TICK = 1
 /**
- * Walking around the lobby earns Health too: one gain for every WALK_STEP metres
- * walked (about one a second at a walk). Less than a pad, so training still pays.
+ * Tapping the screen is how you train - walking around earns nothing: each tap is one
+ * scoop of your bucket - its power, multiplied, and times the well you're standing in
+ * (x1 anywhere else). At most CLICK_RATE taps a second count, so an auto-clicker gains
+ * nothing a quick finger doesn't. Standing in a well scoops by itself too, once every
+ * TRAIN_INTERVAL: slower, but it keeps going while you rest.
  */
-export const WALK_STEP = 8
+export const CLICK_RATE = 8
 
 /**
- * Your level comes from your Health: reaching level L takes healthForLevel(L) Health.
+ * Your level comes from your Water Power: reaching level L takes waterForLevel(L).
  * Each level needs LEVEL_GROWTH_EARLY times the last at first, easing towards
- * LEVEL_GROWTH_LATE: early rebirths multiply your gains many times over (a new pad,
- * x2 from the rebirth itself, the next tire), later ones much less, and the levels
+ * LEVEL_GROWTH_LATE: early rebirths multiply your gains many times over (a new well,
+ * x2 from the rebirth itself, the next bucket), later ones much less, and the levels
  * keep step so every rebirth takes a little longer than the one before.
  */
-export const LEVEL_BASE = 20
+export const LEVEL_BASE = 70
 export const LEVEL_GROWTH_EARLY = 1.3
 export const LEVEL_GROWTH_LATE = 1.097
 export const LEVEL_GROWTH_FADE = 100
@@ -55,15 +57,26 @@ const round2 = (n) => {
   return Math.round(n / step) * step
 }
 
-export const healthForLevel = (level) => (level <= 1 ? 0 : round2(LEVEL_TABLE[Math.min(MAX_LEVEL, level)]))
+export const waterForLevel = (level) => (level <= 1 ? 0 : round2(LEVEL_TABLE[Math.min(MAX_LEVEL, level)]))
 
 // --- Rebirth ----------------------------------------------------------------------
 
 /** Max level by rebirth count: R0 = 15, R1 = 23, then +8 per rebirth. */
 export const levelCap = (rebirths) => Math.min(MAX_LEVEL, 15 + 8 * Math.max(0, rebirths))
 
-/** Health multiplier from rebirths, as in the reference: R0 = x1, R1 = x2, R2 = x3 ... */
-export const rebirthMultiplier = (rebirths) => 1 + Math.max(0, rebirths)
+/**
+ * Water multiplier from rebirths: R0 = x1, R1 = x2, R2 = x3 ... and from Rebirth
+ * REBIRTH_BOOST.from on, every rebirth multiplies it by REBIRTH_BOOST.mult as well. Each
+ * rebirth's 8 more levels need about twice the Water of the last's; early on new
+ * buckets, wells and pets keep pace with that, but late in the game they run out, and
+ * without the boost every rebirth would take twice as long as the one before.
+ * scripts/tune-progression.mjs sets the two from the balance sim.
+ */
+export const REBIRTH_BOOST = { mult: 1.6, from: 18 }
+export const rebirthMultiplier = (rebirths) => {
+  const r = Math.max(0, rebirths)
+  return (1 + r) * REBIRTH_BOOST.mult ** Math.max(0, r - REBIRTH_BOOST.from)
+}
 
 /**
  * From Rebirth 15, every 5th rebirth (15, 20, 25...) comes with a gift of eggs: late in
@@ -84,169 +97,278 @@ export function nextRebirthGift(rebirths) {
   return rebirthGift(at)
 }
 
-/** Skipping straight to a rebirth costs this many max-level rolls' worth of Wins. */
-export const REBIRTH_SKIP_ROLLS = 10
+/** Skipping straight to a rebirth costs this many max-level runs' worth of Wins. */
+export const REBIRTH_SKIP_RUNS = 10
 
-// --- Training pads ----------------------------------------------------------------
+// --- Training wells ---------------------------------------------------------------
 
 /**
- * Training pads, south to north in world.js order. Standing on one gains Health every
- * TRAIN_INTERVAL. `rebirths` = rebirths needed; `product` = the SHOP pass that unlocks
- * it instead.
+ * Training wells, south to north in world.js order: round pools under a little roof.
+ * Standing in one scoops Water every TRAIN_INTERVAL. `rebirths` = rebirths needed;
+ * `product` = the SHOP pass that unlocks it instead.
  */
-export const PADS = [
-  { id: 'starter', name: 'Starter Pad', mult: 1, rebirths: 0 },
-  { id: 'speed', name: 'Speed Pad', mult: 2, rebirths: 1 },
-  { id: 'turbo', name: 'Turbo Pad', mult: 4, rebirths: 2 },
-  { id: 'nitro', name: 'Nitro Pad', mult: 10, rebirths: 4 },
-  { id: 'rocket', name: 'Rocket Pad', mult: 20, rebirths: 6 },
-  { id: 'diamond', name: 'Diamond', mult: 40, product: 'padVeryOp', tag: 'VERY OP!' },
-  { id: 'galaxy', name: 'Galaxy Planet', mult: 100, product: 'padBest', tag: 'BEST OVERALL!' },
+export const WELLS = [
+  { id: 'pebble', name: 'Pebble Well', mult: 1, rebirths: 0 },
+  { id: 'spring', name: 'Spring Well', mult: 2, rebirths: 1 },
+  { id: 'fountain', name: 'Fountain Well', mult: 4, rebirths: 2 },
+  { id: 'geyser', name: 'Geyser Well', mult: 10, rebirths: 4 },
+  { id: 'waterfall', name: 'Waterfall Well', mult: 20, rebirths: 6 },
+  { id: 'crystal', name: 'Crystal Well', mult: 40, product: 'wellVeryOp', tag: 'VERY OP!' },
+  { id: 'galaxy', name: 'Galaxy Well', mult: 100, product: 'wellBest', tag: 'BEST OVERALL!' },
 ]
 
-// --- Tires ------------------------------------------------------------------------
+// --- Buckets ----------------------------------------------------------------------
 
 /**
- * The tires you roll. `power` is the Health every single gain is worth before
- * multipliers (the "+1" of the Worn Bicycle); `cost` is in Wins; `rarity` (RARITIES)
- * is shown on its stand. Bought in order at the showroom. Every one is made of
- * something different - wood, stone, cookie, pizza, donut, watermelon, silver, gold,
- * platinum, gems, diamond, rainbow, unicorn, galaxy, dragon... - and the further up the
- * list, the crazier and shinier it gets. About x2.6 power for x2.8-x3.3 the Wins each.
+ * The buckets you carry. `power` is the Water every single scoop is worth before
+ * multipliers (the "+1" of the Tiny Pail); `cost` is in Wins; `rarity` (RARITIES) is
+ * shown on its stand. Any of them can be bought at the bucket shop, in any order: you
+ * carry the best you own. Each is made of something different - plastic, wood, tin,
+ * copper, candy, ice, lava, gold, gems, diamond, rainbow, galaxy... - and the further up
+ * the list, the crazier and shinier it gets. About x2.6 power for about x3 the Wins
+ * each. Prices are set by scripts/tune-economy.mjs from the Wins a player earns.
  */
-export const TIRES = [
-  { id: 'bicycle', name: 'Orange Slice', power: 1, cost: 0, rarity: 'common' },
-  // Cheap enough to buy with the Wins from your very first roll.
-  { id: 'mountain', name: 'Lime Slice', power: 3, cost: 1, rarity: 'common' },
-  { id: 'wood', name: 'Wooden Wheel', power: 5, cost: 15, rarity: 'common' },
-  { id: 'stone', name: 'Stone Wheel', power: 12, cost: 75, rarity: 'uncommon' },
-  { id: 'cookie', name: 'Giant Cookie', power: 30, cost: 300, rarity: 'uncommon' },
-  { id: 'pizza', name: 'Pizza Wheel', power: 75, cost: 1200, rarity: 'rare' },
-  { id: 'donut', name: 'Donut', power: 200, cost: 4500, rarity: 'rare' },
-  { id: 'watermelon', name: 'Watermelon', power: 500, cost: 16000, rarity: 'rare' },
-  { id: 'monster', name: 'Cheese Wheel', power: 1250, cost: 55000, rarity: 'epic' },
-  { id: 'mint', name: 'Peppermint Candy', power: 3500, cost: 180000, rarity: 'epic' },
-  { id: 'silver', name: 'Silver Coin', power: 9000, cost: 600000, rarity: 'epic' },
-  { id: 'ice', name: 'Ice Cream', power: 23000, cost: 2e6, rarity: 'epic' },
-  { id: 'gold', name: 'Gold Coin', power: 60000, cost: 6e6, rarity: 'legendary' },
-  { id: 'lava', name: 'Lava Rock', power: 155000, cost: 17e6, rarity: 'legendary' },
-  { id: 'platinum', name: 'Sushi Roll', power: 400000, cost: 48e6, rarity: 'legendary' },
-  { id: 'emerald', name: 'Slime Ball', power: 1.05e6, cost: 135e6, rarity: 'legendary' },
-  { id: 'ruby', name: 'Burger', power: 2.7e6, cost: 380e6, rarity: 'mythic' },
-  { id: 'diamond', name: 'Diamond Tire', power: 7e6, cost: 1.05e9, rarity: 'mythic' },
-  { id: 'rainbow', name: 'Rainbow Candy', power: 1.8e7, cost: 3e9, rarity: 'mythic' },
-  { id: 'unicorn', name: 'Unicorn Cloud', power: 4.8e7, cost: 8.5e9, rarity: 'mythic' },
-  { id: 'galaxy', name: 'Galaxy Tire', power: 1.25e8, cost: 2.4e10, rarity: 'secret' },
-  { id: 'dragon', name: 'Dragon Scale', power: 3.3e8, cost: 6.8e10, rarity: 'secret' },
-  { id: 'cosmic', name: 'Birthday Cake', power: 8.6e8, cost: 1.9e11, rarity: 'secret' },
-  { id: 'infinity', name: 'Infinity Crystal', power: 2.2e9, cost: 5.4e11, rarity: 'secret' },
+export const BUCKETS = [
+  { id: 'pail', name: 'Tiny Pail', power: 1, cost: 0, rarity: 'common' },
+  // Cheap enough to buy with the Wins from your very first run.
+  { id: 'beach', name: 'Beach Bucket', power: 3, cost: 1, rarity: 'common' },
+  { id: 'wood', name: 'Wooden Bucket', power: 5, cost: 4, rarity: 'common' },
+  { id: 'tin', name: 'Tin Bucket', power: 12, cost: 15, rarity: 'uncommon' },
+  { id: 'copper', name: 'Copper Pail', power: 30, cost: 53, rarity: 'uncommon' },
+  { id: 'bubblegum', name: 'Bubblegum Bucket', power: 75, cost: 180, rarity: 'rare' },
+  { id: 'candy', name: 'Candy Cane Bucket', power: 200, cost: 600, rarity: 'rare' },
+  { id: 'melon', name: 'Melon Bucket', power: 500, cost: 1900, rarity: 'rare' },
+  { id: 'coral', name: 'Coral Bucket', power: 1250, cost: 6100, rarity: 'epic' },
+  { id: 'ice', name: 'Ice Bucket', power: 3500, cost: 19000, rarity: 'epic' },
+  { id: 'silver', name: 'Silver Bucket', power: 9000, cost: 59000, rarity: 'epic' },
+  { id: 'slime', name: 'Slime Bucket', power: 23000, cost: 180000, rarity: 'epic' },
+  { id: 'gold', name: 'Golden Bucket', power: 60000, cost: 520000, rarity: 'legendary' },
+  { id: 'lava', name: 'Lava Bucket', power: 155000, cost: 1.5e6, rarity: 'legendary' },
+  { id: 'emerald', name: 'Emerald Bucket', power: 400000, cost: 4.4e6, rarity: 'legendary' },
+  { id: 'ruby', name: 'Ruby Bucket', power: 1.05e6, cost: 1.2e7, rarity: 'legendary' },
+  { id: 'sapphire', name: 'Sapphire Bucket', power: 2.7e6, cost: 3.5e7, rarity: 'mythic' },
+  { id: 'diamond', name: 'Diamond Bucket', power: 7e6, cost: 9.6e7, rarity: 'mythic' },
+  { id: 'rainbow', name: 'Rainbow Bucket', power: 1.8e7, cost: 2.6e8, rarity: 'mythic' },
+  { id: 'unicorn', name: 'Unicorn Bucket', power: 4.8e7, cost: 7.2e8, rarity: 'mythic' },
+  { id: 'galaxy', name: 'Galaxy Bucket', power: 1.25e8, cost: 1.9e9, rarity: 'secret' },
+  { id: 'dragon', name: 'Dragon Bucket', power: 3.3e8, cost: 5.2e9, rarity: 'secret' },
+  { id: 'cosmic', name: 'Cosmic Bucket', power: 8.6e8, cost: 1.4e10, rarity: 'secret' },
+  { id: 'infinity', name: 'Infinity Bucket', power: 2.2e9, cost: 3.6e10, rarity: 'secret' },
 ]
 
-// --- Rolling ----------------------------------------------------------------------
-
 /**
- * How far a tire rolls: 0 Health still rolls ROLL_BASE metres, and the first gate is
- * reached with the Health its wall needs, less WALL_MARGIN; between gates distance
- * follows Health (in log terms) from one gate's mark to the next. So the gates' Health
- * sets the pace, and their spacing - each stage a little longer than the last - is just
- * how it looks. See logic.rollReach.
+ * Upgrading a bucket: up to BUCKET_STARS stars, each multiplying its power by STAR_POWER.
+ * Star `s` costs STAR_SHARES[s - 1] of the next bucket's price, a little more each - so
+ * while you save up for the next bucket there's always an upgrade a few minutes away,
+ * and a new bucket is still the bigger step (x2.6 against x1.77 for all eight stars).
+ * The last bucket, Infinity, has no limit: its stars go on for ever, priced off three
+ * times its cost and each STAR_ENDLESS_GROWTH times the last past the eighth.
  */
-export const ROLL_BASE = 60
-export const ROLL_H0 = 50
-/** A gate's wall needs this many times the Health that just reaches it. */
-export const WALL_MARGIN = 1.3
+export const BUCKET_STARS = 8
+export const STAR_POWER = 1.074
+export const STAR_SHARES = [0.08, 0.09, 0.1, 0.11, 0.12, 0.13, 0.14, 0.15]
+export const STAR_ENDLESS_GROWTH = 1.12
 
 /**
- * The track's sixty stages, each behind a gate with a wooden wall across it, each a
- * little longer than the one before (100 m, 106 m, 112 m ... about 450 m). `theme` picks
- * the stage's look (one of twenty, so later stages are new places in familiar colours).
- * `wall` = Health needed to smash through it (a tire with less crashes into it and
- * breaks); each needs about twice the last, a touch more further on. `winsPerMeter`
- * pays for every metre rolled in the stage; `smash` is the Wins for breaking the wall on
- * any roll, and `discover` a one-off prize the first time you ever reach the stage.
+ * The bucket collection: every bucket you own past the free Tiny Pail adds
+ * COLLECTION_BONUS to all your Water gains (+46% for all 24), so even the cheap old ones
+ * are worth having.
+ */
+export const COLLECTION_BONUS = 0.02
+
+/** How many stars bucket `index` (into BUCKETS) can take: the last, endless. */
+export const maxStars = (index) => (index === BUCKETS.length - 1 ? Infinity : BUCKET_STARS)
+
+/** Wins for star `star` (1, 2, ...) of bucket `index` (into BUCKETS). */
+export function starPrice(index, star) {
+  const next = index + 1 < BUCKETS.length ? BUCKETS[index + 1].cost : BUCKETS[index].cost * 3
+  const past = Math.max(0, star - BUCKET_STARS)
+  const raw = next * STAR_SHARES[Math.max(0, Math.min(BUCKET_STARS, star) - 1)] * STAR_ENDLESS_GROWTH ** past
+  if (raw < 100) return Math.max(1, Math.round(raw))
+  const step = 10 ** (Math.floor(Math.log10(raw)) - 1)
+  return Math.round(raw / step) * step
+}
+
+// --- The escape course --------------------------------------------------------------
+
+/**
+ * The course's sixty stages, north out of the lobby: stage 0 is the start, and every
+ * stage after it is a pit to fill and the ledge beyond it. `level` is the level whose
+ * Water Power fills its pit to the brim - its `need`, waterForLevel(level) - so each
+ * gate says which level it takes (less fills it partway, too low to swim across); each
+ * needs about twice the Water of the last. `wins` is what the ledge's Wins pad pays
+ * (claiming it ends your run and takes you back to the lobby): 3, 5, 10 and growing
+ * from there. `discover` is a one-off prize the first time you ever reach the ledge.
  * Generated by scripts/gen-stages.py.
  */
-export const ZONES = [
-  { id: 'grassy', name: 'Grassy Meadow', theme: 'grassy', start: 0, wall: 0, winsPerMeter: 0.006, smash: 0, discover: 0 },
-  { id: 'autumn', name: 'Autumn Forest', theme: 'autumn', start: 100, wall: 11, winsPerMeter: 0.0072, smash: 2, discover: 5 },
-  { id: 'desert', name: 'Desert Canyon', theme: 'desert', start: 200, wall: 21, winsPerMeter: 0.00984, smash: 3, discover: 7 },
-  { id: 'beach', name: 'Sunny Beach', theme: 'beach', start: 306, wall: 41, winsPerMeter: 0.0135, smash: 4, discover: 9 },
-  { id: 'jungle', name: 'Jungle Ruins', theme: 'jungle', start: 418, wall: 79, winsPerMeter: 0.0185, smash: 5, discover: 13 },
-  { id: 'frozen', name: 'Frozen Peaks', theme: 'frozen', start: 536, wall: 150, winsPerMeter: 0.0255, smash: 7, discover: 18 },
-  { id: 'cherry', name: 'Cherry Blossom', theme: 'cherry', start: 660, wall: 300, winsPerMeter: 0.0351, smash: 10, discover: 24 },
-  { id: 'candy', name: 'Candy Land', theme: 'candy', start: 790, wall: 590, winsPerMeter: 0.0486, smash: 13, discover: 34 },
-  { id: 'mushroom', name: 'Mushroom Valley', theme: 'mushroom', start: 926, wall: 1200, winsPerMeter: 0.0673, smash: 19, discover: 47 },
-  { id: 'volcano', name: 'Lava Volcano', theme: 'volcano', start: 1068, wall: 2300, winsPerMeter: 0.0934, smash: 26, discover: 65 },
-  { id: 'swamp', name: 'Lily Swamp', theme: 'swamp', start: 1216, wall: 4600, winsPerMeter: 0.13, smash: 36, discover: 90 },
-  { id: 'crystal', name: 'Crystal Caves', theme: 'crystal', start: 1370, wall: 9200, winsPerMeter: 0.181, smash: 50, discover: 130 },
-  { id: 'ocean', name: 'Coral Reef', theme: 'ocean', start: 1530, wall: 18000, winsPerMeter: 0.253, smash: 70, discover: 180 },
-  { id: 'neon', name: 'Neon City', theme: 'neon', start: 1696, wall: 37000, winsPerMeter: 0.355, smash: 99, discover: 250 },
-  { id: 'sky', name: 'Cloud Kingdom', theme: 'sky', start: 1868, wall: 75000, winsPerMeter: 0.498, smash: 140, discover: 350 },
-  { id: 'rainbow', name: 'Rainbow Road', theme: 'rainbow', start: 2046, wall: 150000, winsPerMeter: 0.7, smash: 190, discover: 490 },
-  { id: 'moon', name: 'Moon Base', theme: 'moon', start: 2230, wall: 310000, winsPerMeter: 0.987, smash: 270, discover: 690 },
-  { id: 'aurora', name: 'Aurora Tundra', theme: 'aurora', start: 2420, wall: 640000, winsPerMeter: 1.39, smash: 390, discover: 970 },
-  { id: 'space', name: 'Outer Space', theme: 'space', start: 2616, wall: 1.3e6, winsPerMeter: 1.97, smash: 550, discover: 1400 },
-  { id: 'cosmic', name: 'Cosmic Core', theme: 'cosmic', start: 2818, wall: 2.7e6, winsPerMeter: 2.8, smash: 780, discover: 1900 },
-  { id: 'hills', name: 'Green Hills', theme: 'grassy', start: 3026, wall: 5.7e6, winsPerMeter: 3.98, smash: 1100, discover: 2800 },
-  { id: 'maple', name: 'Maple Woods', theme: 'autumn', start: 3240, wall: 1.2e7, winsPerMeter: 5.66, smash: 1600, discover: 3900 },
-  { id: 'dunes', name: 'Dune Sea', theme: 'desert', start: 3460, wall: 2.5e7, winsPerMeter: 8.08, smash: 2200, discover: 5600 },
-  { id: 'island', name: 'Palm Island', theme: 'beach', start: 3686, wall: 5.3e7, winsPerMeter: 11.6, smash: 3200, discover: 8000 },
-  { id: 'temple', name: 'Lost Temple', theme: 'jungle', start: 3918, wall: 1.1e8, winsPerMeter: 16.6, smash: 4600, discover: 12000 },
-  { id: 'glacier', name: 'Glacier Pass', theme: 'frozen', start: 4156, wall: 2.4e8, winsPerMeter: 23.8, smash: 6600, discover: 17000 },
-  { id: 'sakura', name: 'Sakura Garden', theme: 'cherry', start: 4400, wall: 5.1e8, winsPerMeter: 34.2, smash: 9500, discover: 24000 },
-  { id: 'sweets', name: 'Sweet Valley', theme: 'candy', start: 4650, wall: 1.1e9, winsPerMeter: 49.3, smash: 14000, discover: 34000 },
-  { id: 'fungi', name: 'Fungi Forest', theme: 'mushroom', start: 4906, wall: 2.3e9, winsPerMeter: 71.3, smash: 20000, discover: 50000 },
-  { id: 'magma', name: 'Magma Core', theme: 'volcano', start: 5168, wall: 5e9, winsPerMeter: 103, smash: 29000, discover: 72000 },
-  { id: 'marsh', name: 'Green Marsh', theme: 'swamp', start: 5436, wall: 1.1e10, winsPerMeter: 150, smash: 42000, discover: 100000 },
-  { id: 'gems', name: 'Gem Mines', theme: 'crystal', start: 5710, wall: 2.4e10, winsPerMeter: 218, smash: 60000, discover: 150000 },
-  { id: 'deep', name: 'Deep Ocean', theme: 'ocean', start: 5990, wall: 5.2e10, winsPerMeter: 317, smash: 88000, discover: 220000 },
-  { id: 'cyber', name: 'Cyber City', theme: 'neon', start: 6276, wall: 1.1e11, winsPerMeter: 462, smash: 130000, discover: 320000 },
-  { id: 'castle', name: 'Sky Castle', theme: 'sky', start: 6568, wall: 2.5e11, winsPerMeter: 676, smash: 190000, discover: 470000 },
-  { id: 'prism', name: 'Prism Path', theme: 'rainbow', start: 6866, wall: 5.6e11, winsPerMeter: 990, smash: 270000, discover: 690000 },
-  { id: 'lunar', name: 'Lunar Craters', theme: 'moon', start: 7170, wall: 1.2e12, winsPerMeter: 1450, smash: 400000, discover: 1e6 },
-  { id: 'lights', name: 'Northern Lights', theme: 'aurora', start: 7480, wall: 2.8e12, winsPerMeter: 2140, smash: 590000, discover: 1.5e6 },
-  { id: 'galaxy', name: 'Galaxy Rift', theme: 'space', start: 7796, wall: 6.2e12, winsPerMeter: 3150, smash: 870000, discover: 2.2e6 },
-  { id: 'infinity', name: 'Infinity', theme: 'cosmic', start: 8118, wall: 1.4e13, winsPerMeter: 4650, smash: 1.3e6, discover: 3.2e6 },
-  { id: 'sunflower', name: 'Sunflower Fields', theme: 'grassy', start: 8446, wall: 3.2e13, winsPerMeter: 6870, smash: 1.9e6, discover: 4.8e6 },
-  { id: 'harvest', name: 'Harvest Valley', theme: 'autumn', start: 8780, wall: 7.2e13, winsPerMeter: 10200, smash: 2.8e6, discover: 7.1e6 },
-  { id: 'oasis', name: 'Golden Oasis', theme: 'desert', start: 9120, wall: 1.6e14, winsPerMeter: 15100, smash: 4.2e6, discover: 1e7 },
-  { id: 'lagoon', name: 'Blue Lagoon', theme: 'beach', start: 9466, wall: 3.7e14, winsPerMeter: 22500, smash: 6.2e6, discover: 1.6e7 },
-  { id: 'canopy', name: 'Treetop Canopy', theme: 'jungle', start: 9818, wall: 8.6e14, winsPerMeter: 33500, smash: 9.3e6, discover: 2.3e7 },
-  { id: 'yeti', name: 'Yeti Mountain', theme: 'frozen', start: 10176, wall: 2e15, winsPerMeter: 50000, smash: 1.4e7, discover: 3.5e7 },
-  { id: 'lantern', name: 'Lantern Garden', theme: 'cherry', start: 10540, wall: 4.6e15, winsPerMeter: 74800, smash: 2.1e7, discover: 5.2e7 },
-  { id: 'cupcake', name: 'Cupcake Kingdom', theme: 'candy', start: 10910, wall: 1.1e16, winsPerMeter: 112000, smash: 3.1e7, discover: 7.8e7 },
-  { id: 'glowcap', name: 'Glowcap Grotto', theme: 'mushroom', start: 11286, wall: 2.5e16, winsPerMeter: 168000, smash: 4.7e7, discover: 1.2e8 },
-  { id: 'inferno', name: 'Inferno Peak', theme: 'volcano', start: 11668, wall: 5.8e16, winsPerMeter: 253000, smash: 7e7, discover: 1.8e8 },
-  { id: 'bayou', name: 'Firefly Bayou', theme: 'swamp', start: 12056, wall: 1.4e17, winsPerMeter: 382000, smash: 1.1e8, discover: 2.7e8 },
-  { id: 'geode', name: 'Geode Valley', theme: 'crystal', start: 12450, wall: 3.2e17, winsPerMeter: 576000, smash: 1.6e8, discover: 4e8 },
-  { id: 'atlantis', name: 'Atlantis', theme: 'ocean', start: 12850, wall: 7.6e17, winsPerMeter: 872000, smash: 2.4e8, discover: 6.1e8 },
-  { id: 'arcade', name: 'Arcade Avenue', theme: 'neon', start: 13256, wall: 1.8e18, winsPerMeter: 1.3e6, smash: 3.7e8, discover: 9.2e8 },
-  { id: 'islands', name: 'Sky Islands', theme: 'sky', start: 13668, wall: 4.3e18, winsPerMeter: 2e6, smash: 5.6e8, discover: 1.4e9 },
-  { id: 'unicorn', name: 'Unicorn Trail', theme: 'rainbow', start: 14086, wall: 1e19, winsPerMeter: 3e6, smash: 8.5e8, discover: 2.1e9 },
-  { id: 'mars', name: 'Red Planet', theme: 'moon', start: 14510, wall: 2.5e19, winsPerMeter: 4.7e6, smash: 1.3e9, discover: 3.2e9 },
-  { id: 'comet', name: 'Comet Ice', theme: 'aurora', start: 14940, wall: 6e19, winsPerMeter: 7.1e6, smash: 2e9, discover: 4.9e9 },
-  { id: 'nebula', name: 'Nebula', theme: 'space', start: 15376, wall: 1.5e20, winsPerMeter: 1.1e7, smash: 3e9, discover: 7.5e9 },
-  { id: 'beyond', name: 'The Beyond', theme: 'cosmic', start: 15818, wall: 3.5e20, winsPerMeter: 1.7e7, smash: 4.6e9, discover: 1.2e10 },
+const STAGE_TABLE = [
+  { id: 'grassy', name: 'Grassy Meadow', level: 0, wins: 0, discover: 0 },
+  { id: 'autumn', name: 'Autumn Forest', level: 2, wins: 3, discover: 1 },
+  { id: 'desert', name: 'Desert Canyon', level: 3, wins: 5, discover: 1 },
+  { id: 'beach', name: 'Sunny Beach', level: 4, wins: 9, discover: 1 },
+  { id: 'jungle', name: 'Jungle Ruins', level: 5, wins: 17, discover: 3 },
+  { id: 'frozen', name: 'Frozen Peaks', level: 6, wins: 30, discover: 4 },
+  { id: 'cherry', name: 'Cherry Blossom', level: 8, wins: 54, discover: 8 },
+  { id: 'candy', name: 'Candy Land', level: 10, wins: 81, discover: 12 },
+  { id: 'mushroom', name: 'Mushroom Valley', level: 12, wins: 110, discover: 16 },
+  { id: 'volcano', name: 'Lava Volcano', level: 15, wins: 160, discover: 24 },
+  { id: 'swamp', name: 'Lily Swamp', level: 18, wins: 220, discover: 33 },
+  { id: 'crystal', name: 'Crystal Caves', level: 21, wins: 300, discover: 45 },
+  { id: 'ocean', name: 'Coral Reef', level: 24, wins: 420, discover: 63 },
+  { id: 'neon', name: 'Neon City', level: 27, wins: 590, discover: 88 },
+  { id: 'sky', name: 'Cloud Kingdom', level: 30, wins: 830, discover: 120 },
+  { id: 'rainbow', name: 'Rainbow Road', level: 33, wins: 1200, discover: 180 },
+  { id: 'moon', name: 'Moon Base', level: 36, wins: 1600, discover: 240 },
+  { id: 'aurora', name: 'Aurora Tundra', level: 39, wins: 2300, discover: 340 },
+  { id: 'space', name: 'Outer Space', level: 43, wins: 3300, discover: 500 },
+  { id: 'cosmic', name: 'Cosmic Core', level: 46, wins: 4700, discover: 700 },
+  { id: 'hills', name: 'Green Hills', level: 50, wins: 6600, discover: 990 },
+  { id: 'maple', name: 'Maple Woods', level: 53, wins: 9400, discover: 1400 },
+  { id: 'dunes', name: 'Dune Sea', level: 57, wins: 13000, discover: 2000 },
+  { id: 'island', name: 'Palm Island', level: 61, wins: 19000, discover: 2800 },
+  { id: 'temple', name: 'Lost Temple', level: 65, wins: 28000, discover: 4200 },
+  { id: 'glacier', name: 'Glacier Pass', level: 69, wins: 40000, discover: 6000 },
+  { id: 'sakura', name: 'Sakura Garden', level: 73, wins: 57000, discover: 8600 },
+  { id: 'sweets', name: 'Sweet Valley', level: 77, wins: 82000, discover: 12000 },
+  { id: 'fungi', name: 'Fungi Forest', level: 81, wins: 120000, discover: 18000 },
+  { id: 'magma', name: 'Magma Core', level: 86, wins: 170000, discover: 26000 },
+  { id: 'marsh', name: 'Green Marsh', level: 90, wins: 250000, discover: 38000 },
+  { id: 'gems', name: 'Gem Mines', level: 95, wins: 360000, discover: 54000 },
+  { id: 'deep', name: 'Deep Ocean', level: 100, wins: 530000, discover: 80000 },
+  { id: 'cyber', name: 'Cyber City', level: 105, wins: 770000, discover: 120000 },
+  { id: 'castle', name: 'Sky Castle', level: 110, wins: 1.1e6, discover: 160000 },
+  { id: 'prism', name: 'Prism Path', level: 115, wins: 1.6e6, discover: 240000 },
+  { id: 'lunar', name: 'Lunar Craters', level: 120, wins: 2.4e6, discover: 360000 },
+  { id: 'lights', name: 'Northern Lights', level: 126, wins: 3.6e6, discover: 540000 },
+  { id: 'galaxy', name: 'Galaxy Rift', level: 131, wins: 5.2e6, discover: 780000 },
+  { id: 'infinity', name: 'Infinity', level: 137, wins: 7.7e6, discover: 1.2e6 },
+  { id: 'sunflower', name: 'Sunflower Fields', level: 143, wins: 1.1e7, discover: 1.6e6 },
+  { id: 'harvest', name: 'Harvest Valley', level: 149, wins: 1.7e7, discover: 2.6e6 },
+  { id: 'oasis', name: 'Golden Oasis', level: 155, wins: 2.5e7, discover: 3.8e6 },
+  { id: 'lagoon', name: 'Blue Lagoon', level: 161, wins: 3.7e7, discover: 5.6e6 },
+  { id: 'canopy', name: 'Treetop Canopy', level: 167, wins: 5.6e7, discover: 8.4e6 },
+  { id: 'yeti', name: 'Yeti Mountain', level: 174, wins: 8.3e7, discover: 1.2e7 },
+  { id: 'lantern', name: 'Lantern Garden', level: 180, wins: 1.2e8, discover: 1.8e7 },
+  { id: 'cupcake', name: 'Cupcake Kingdom', level: 187, wins: 1.9e8, discover: 2.8e7 },
+  { id: 'glowcap', name: 'Glowcap Grotto', level: 194, wins: 2.8e8, discover: 4.2e7 },
+  { id: 'inferno', name: 'Inferno Peak', level: 201, wins: 4.2e8, discover: 6.3e7 },
+  { id: 'bayou', name: 'Firefly Bayou', level: 208, wins: 6.4e8, discover: 9.6e7 },
+  { id: 'geode', name: 'Geode Valley', level: 216, wins: 9.6e8, discover: 1.4e8 },
+  { id: 'atlantis', name: 'Atlantis', level: 223, wins: 1.5e9, discover: 2.2e8 },
+  { id: 'arcade', name: 'Arcade Avenue', level: 231, wins: 2.2e9, discover: 3.3e8 },
+  { id: 'islands', name: 'Sky Islands', level: 239, wins: 3.3e9, discover: 5e8 },
+  { id: 'unicorn', name: 'Unicorn Trail', level: 247, wins: 5.1e9, discover: 7.6e8 },
+  { id: 'mars', name: 'Red Planet', level: 255, wins: 7.7e9, discover: 1.2e9 },
+  { id: 'comet', name: 'Comet Ice', level: 263, wins: 1.2e10, discover: 1.8e9 },
+  { id: 'nebula', name: 'Nebula', level: 271, wins: 1.8e10, discover: 2.7e9 },
+  { id: 'beyond', name: 'The Beyond', level: 279, wins: 2.8e10, discover: 4.2e9 },
 ]
 
-/** A tire that can't break a wall stops this far short of it, bounced back off it. */
-export const WALL_STOP = 2.5
-
-/** Wins pickups down the track: first at 40 m, then every 80 m. */
-export const TROPHY_FIRST = 40
-export const TROPHY_SPACING = 80
-/** A trophy is worth this many metres of its zone's Wins (at least 1). */
-export const TROPHY_METERS = 80
-
-/** Seconds from pressing ROLL to the tire setting off: it pops out and you push it. */
-export const ROLL_LAUNCH = 0.8
 /**
- * Seconds a roll of `distance` metres takes, launch included. Logarithmic: long rolls
- * stay short.
+ * Pouring. Standing at a pit's rim you tip your bucket out, pouring POUR_RATE times your
+ * Water Power into the pit every second until it's full - so the stronger you are, the
+ * quicker it fills. Each pit holds `capacity` Water: what its minimum Water Power
+ * (`need`, its level's) pours in POUR_AT_MIN(stage) seconds. Below that minimum you're
+ * too weak to fill it at all; at twice it, it takes half as long, and so on - never
+ * quicker than POUR_MIN_SECONDS, so even a puddle splashes full. The first pits fill in
+ * moments; further on they hold far more and take a while even when you're ready.
  */
-export const rollDuration = (distance) => ROLL_LAUNCH + 3 + 2.2 * Math.log(1 + distance / 60)
-/** The result popup after you stop, before you're back at the start. */
-export const ROLL_RECOVERY = 2.2
+export const POUR_RATE = 1
+export const POUR_MIN_SECONDS = 0.6
+/**
+ * Tapping while you pour tips the bucket harder: each tap pours POUR_TAP seconds' worth
+ * more at once (taps count at most CLICK_RATE a second, as everywhere) - so a quick
+ * finger fills a pit two or three times as fast as standing there.
+ */
+export const POUR_TAP = 0.25
+/**
+ * Pouring together: everyone else at the rim of the pit you're filling (in your world)
+ * pours alongside you, each adding CO_OP_HELP of your speed, up to CO_OP_MAX of them -
+ * and when it's full each of them earns CO_OP_TIP of that pit's Wins pad for helping.
+ */
+export const CO_OP_HELP = 0.5
+export const CO_OP_MAX = 3
+export const CO_OP_TIP = 0.1
+/** How much faster a pit fills with `helpers` others pouring in too. */
+export const coopSpeed = (helpers) => 1 + CO_OP_HELP * Math.min(CO_OP_MAX, Math.max(0, helpers))
+
+/** Each Wins coin over a ledge (world.coinsOf) pays this share of the ledge's Wins pad. */
+export const COIN_SHARE = 0.03
+export const POUR_AT_MIN = (stage) => Math.min(40, 5 + 2.5 * Math.max(0, stage - 1))
+
+/**
+ * Every MEGA_EVERY-th pit, in both worlds, is a Mega Pit: MEGA_LENGTH metres longer,
+ * holding MEGA_CAPACITY times the Water, under a grander gate - and the first time you
+ * reach the ledge beyond it, its first-visit prize is MEGA_PRIZE times as big and its
+ * treasure chest opens (MEGA_CHESTS: eggs, into Items). A big goal every ten stages.
+ */
+export const MEGA_EVERY = 10
+export const MEGA_LENGTH = 5
+export const MEGA_CAPACITY = 1.5
+export const MEGA_PRIZE = 5
+export const isMegaStage = (stage) => stage > 0 && stage % MEGA_EVERY === 0
+
+/** What each world's Mega Pit chests hold, by stage: `{ item, amount }` (ITEMS). */
+export const MEGA_CHESTS = [
+  {
+    10: { item: 'eggMeadow', amount: 1 },
+    20: { item: 'eggSunset', amount: 1 },
+    30: { item: 'eggUnicorn', amount: 1 },
+    40: { item: 'eggVolcano', amount: 1 },
+    50: { item: 'eggVolcano', amount: 2 },
+  },
+  {
+    10: { item: 'eggVolcano', amount: 2 },
+    20: { item: 'eggVolcano', amount: 3 },
+    30: { item: 'eggVolcano', amount: 4 },
+    40: { item: 'eggVolcano', amount: 5 },
+    50: { item: 'eggVolcano', amount: 6 },
+  },
+]
+
+/** Pit `stage` is this long: 10 m at first, growing to about 27 m at the last (Mega Pits longer). */
+export const pitLength = (stage) => Math.round((10 + 0.3 * Math.max(0, stage - 1)) * 2) / 2 + (isMegaStage(stage) ? MEGA_LENGTH : 0)
+
+/** A stage's Water: its `need` (to fill it at all) and `capacity` (to the brim), and a Mega Pit's bigger prize. */
+const withWater = (stage, i) => {
+  const need = stage.level ? waterForLevel(stage.level) : 0
+  const mega = isMegaStage(i)
+  return {
+    ...stage,
+    need,
+    capacity: need * POUR_AT_MIN(i) * (mega ? MEGA_CAPACITY : 1),
+    discover: stage.discover * (mega ? MEGA_PRIZE : 1),
+  }
+}
+
+export const STAGES = STAGE_TABLE.map(withWater)
+
+/** Stage 0 is the start: the first pit is STAGES[1]'s. */
+export const LAST_STAGE = STAGES.length - 1
+
+/**
+ * The Skip pad on each ledge fills the next pit for you - and every pit before it -
+ * on every run until your next rebirth, for this many of that stage's Wins pads: a few
+ * runs' worth, so it's a head start on the next stage, never a way to make Wins.
+ */
+export const SKIP_RUNS = 3
+
+/**
+ * About how long a run out to ledge `stage` takes on foot, not counting the pouring:
+ * across the start, then every pit swum (SWIM_PACE metres a second) and every ledge
+ * walked (WALK_PACE), and a moment to step onto the pad. What Auto Win waits (with the
+ * pouring) between claims, and what the balance sim charges.
+ */
+export const RUN_BASE = 6
+const WALK_PACE = 10
+const SWIM_PACE = 7.5
+const RUN_TABLE = (() => {
+  const t = new Float64Array(STAGES.length)
+  t[0] = RUN_BASE
+  for (let i = 1; i < STAGES.length; i += 1) t[i] = t[i - 1] + pitLength(i) / SWIM_PACE + 12 / WALK_PACE
+  return t
+})()
+export const runSeconds = (stage) => RUN_TABLE[Math.max(0, Math.min(STAGES.length - 1, stage))]
 
 // --- Pets & eggs ------------------------------------------------------------------
 
@@ -260,7 +382,7 @@ export const RARITIES = {
   secret: { name: 'Secret', color: '#ff5bd8', order: 6 },
 }
 
-/** `mult` multiplies Health gains. Equipped pets stack additively (see logic.js). */
+/** `mult` multiplies Water gains. Equipped pets stack additively (see logic.js). */
 export const PETS = {
   cat: { name: 'Cat', rarity: 'common', mult: 1.1 },
   dog: { name: 'Dog', rarity: 'common', mult: 1.15 },
@@ -288,18 +410,24 @@ export const PETS = {
 
 /**
  * Eggs, bought with Wins. `pets` are [petId, weight] - weights are percentages and
- * sum to 100. Each egg is priced at about the Wins of a few rolls at the stage of the
+ * sum to 100. Each egg is priced at about the Wins of a few runs at the stage of the
  * game whose pets it beats.
  */
 export const EGGS = {
-  basic: { name: 'Basic', cost: { wins: 15 }, pets: [['cat', 45], ['dog', 30], ['bunny', 20], ['bear', 5]] },
-  meadow: { name: 'Grass', cost: { wins: 120 }, pets: [['cow', 45], ['parrot', 30], ['fox', 20], ['tiger', 5]] },
-  sunset: { name: 'Sunset', cost: { wins: 750 }, pets: [['flamingo', 45], ['turtle', 30], ['owl', 20], ['phoenix', 5]] },
-  unicorn: { name: 'Unicorn', cost: { wins: 6000 }, pets: [['pony', 50], ['unicorn', 35], ['pegasus', 15]] },
-  volcano: { name: 'Volcano', cost: { wins: 35000 }, pets: [['salamander', 50], ['firebird', 30], ['golem', 15], ['inferno', 5]] },
+  basic: { name: 'Basic', cost: { wins: 3 }, pets: [['cat', 45], ['dog', 30], ['bunny', 20], ['bear', 5]] },
+  meadow: { name: 'Grass', cost: { wins: 24 }, pets: [['cow', 45], ['parrot', 30], ['fox', 20], ['tiger', 5]] },
+  sunset: { name: 'Sunset', cost: { wins: 150 }, pets: [['flamingo', 45], ['turtle', 30], ['owl', 20], ['phoenix', 5]] },
+  unicorn: { name: 'Unicorn', cost: { wins: 1200 }, pets: [['pony', 50], ['unicorn', 35], ['pegasus', 15]] },
+  volcano: { name: 'Volcano', cost: { wins: 7000 }, pets: [['salamander', 50], ['firebird', 30], ['golem', 15], ['inferno', 5]] },
 }
 
 export const MAX_EQUIPPED_PETS = 3
+/**
+ * Pet fusion: GOLDEN_FUSE of the same pet (not golden ones) make one Golden pet, whose
+ * bonus is GOLDEN_BOOST times the pet's - a use for every spare hatch.
+ */
+export const GOLDEN_FUSE = 3
+export const GOLDEN_BOOST = 2
 export const MAX_PET_INVENTORY = 60
 /** Multi-hatch opens this many at once, for that many times the cost. */
 export const MULTI_HATCH = 3
@@ -309,7 +437,7 @@ export const MULTI_HATCH = 3
 export const POTION_DURATION_MS = 5 * 60 * 1000
 
 export const ITEMS = {
-  potionHealth: { name: 'x2 Health Potion', kind: 'potion', boost: 'health', durationMs: POTION_DURATION_MS },
+  potionWater: { name: 'x2 Water Potion', kind: 'potion', boost: 'water', durationMs: POTION_DURATION_MS },
   potionWins: { name: 'x2 Wins Potion', kind: 'potion', boost: 'wins', durationMs: POTION_DURATION_MS },
   eggMeadow: { name: 'Grass Egg', kind: 'egg', egg: 'meadow' },
   eggSunset: { name: 'Sunset Egg', kind: 'egg', egg: 'sunset' },
@@ -322,9 +450,9 @@ export const DAILY_INTERVAL_MS = 24 * 60 * 60 * 1000
 export const DAILY_REWARDS = [
   { label: 'x2 Wins', icon: 'potionWins', sub: '5m', grant: { item: 'potionWins' } },
   { label: 'Dragon', icon: 'pet:dragon', sub: 'x1', grant: { pet: 'dragon' } },
-  { label: 'x2 Health', icon: 'potionHealth', sub: '5m', grant: { item: 'potionHealth' } },
+  { label: 'x2 Water', icon: 'potionWater', sub: '5m', grant: { item: 'potionWater' } },
   { label: 'Unicorn Egg', icon: 'egg:unicorn', sub: 'x1', grant: { item: 'eggUnicorn' } },
-  { label: 'x2 Health', icon: 'potionHealth', sub: '5m', grant: { item: 'potionHealth' } },
+  { label: 'x2 Water', icon: 'potionWater', sub: '5m', grant: { item: 'potionWater' } },
   { label: 'x2 Wins', icon: 'potionWins', sub: '5m', grant: { item: 'potionWins' } },
   { label: 'Volcano Egg', icon: 'egg:volcano', sub: 'x1', grant: { item: 'eggVolcano' } },
 ]
@@ -334,159 +462,276 @@ export const DAILY_REWARDS = [
  * forward to every few minutes for the first hour.
  */
 export const PLAYTIME_REWARDS = [
-  { minutes: 3, label: '+10 Wins', icon: 'trophy', grant: { wins: 10 } },
-  { minutes: 8, label: 'x2 Health', icon: 'potionHealth', grant: { item: 'potionHealth' } },
+  { minutes: 3, label: '+5 Wins', icon: 'trophy', grant: { wins: 5 } },
+  { minutes: 8, label: 'x2 Water', icon: 'potionWater', grant: { item: 'potionWater' } },
   { minutes: 15, label: 'Grass Egg', icon: 'egg:meadow', grant: { item: 'eggMeadow' } },
   { minutes: 25, label: 'x2 Wins', icon: 'potionWins', grant: { item: 'potionWins' } },
-  { minutes: 35, label: '+250 Wins', icon: 'trophy', grant: { wins: 250 } },
+  { minutes: 35, label: '+50 Wins', icon: 'trophy', grant: { wins: 50 } },
   { minutes: 45, label: 'Sunset Egg', icon: 'egg:sunset', grant: { item: 'eggSunset' } },
-  { minutes: 60, label: 'x2 Health', icon: 'potionHealth', grant: { item: 'potionHealth' } },
+  { minutes: 60, label: 'x2 Water', icon: 'potionWater', grant: { item: 'potionWater' } },
   { minutes: 90, label: 'Unicorn Egg', icon: 'egg:unicorn', grant: { item: 'eggUnicorn' } },
 ]
 
-/** The stand by spawn: a pet the first time, a potion on later sessions. */
-export const FREE_REWARD = { firstTime: { pet: 'crab' }, repeat: { item: 'potionHealth' } }
+/**
+ * Daily quests: every day (UTC) QUESTS_PER_DAY of these, the same for everyone, each
+ * with its reward (QUEST_REWARDS, in order) the moment it's done - and QUEST_BONUS for
+ * finishing all of them. `text` reads with the target in place of {n}.
+ */
+export const QUESTS = [
+  { id: 'taps', text: 'Tap {n} times', target: 400 },
+  { id: 'pits', text: 'Fill {n} pits', target: 25 },
+  { id: 'claims', text: 'Claim {n} Wins pads', target: 6 },
+  { id: 'coins', text: 'Pick up {n} coins', target: 30 },
+  { id: 'hatch', text: 'Hatch {n} eggs', target: 3 },
+  { id: 'rebirth', text: 'Rebirth {n} times', target: 2 },
+  { id: 'stars', text: 'Upgrade a bucket {n} times', target: 3 },
+]
+export const QUESTS_PER_DAY = 3
+export const QUEST_REWARDS = [
+  { item: 'potionWater', amount: 1 },
+  { item: 'potionWins', amount: 1 },
+  { item: 'eggUnicorn', amount: 1 },
+]
+export const QUEST_BONUS = { item: 'eggVolcano', amount: 2 }
 
-/** Offline training: a quarter of your pad's rate, for up to 8 hours away. */
+/**
+ * The weekly board: Wins earned from Wins pads and coins since Monday 00:00 UTC. When
+ * the week turns, its top 10 get these (the first time each is back): the best rank
+ * whose `upTo` covers yours.
+ */
+export const WEEKLY_REWARDS = [
+  { upTo: 1, item: 'eggVolcano', amount: 10 },
+  { upTo: 3, item: 'eggVolcano', amount: 6 },
+  { upTo: 10, item: 'eggVolcano', amount: 3 },
+]
+
+/** The stand by spawn: a pet the first time, a potion on later sessions. */
+export const FREE_REWARD = { firstTime: { pet: 'crab' }, repeat: { item: 'potionWater' } }
+
+/** Offline training: a quarter of your well's rate, for up to 8 hours away. */
 export const OFFLINE_RATE = 0.25
 export const OFFLINE_MAX_MS = 8 * 60 * 60 * 1000
 export const OFFLINE_MIN_MS = 60 * 1000
 
 /**
- * The world portal (placed by PORTALS in world.js): its name, and the Wins needed to
- * step through. Stepping through earns the badge of the same id.
+ * The world portal (placed by PORTALS in world.js): its name, and the World 1 stage you
+ * must have reached to step through - its last: escape World 1 and World 2 opens.
+ * Stepping through earns the badge of the same id.
  */
 export const WORLD_PORTALS = {
-  world2: { name: 'World 2', wins: 25000 },
+  world2: { name: 'World 2', stage: LAST_STAGE },
 }
 
 // --- Worlds -----------------------------------------------------------------------
 
 /**
- * World 2, through the portal once you hold WORLD_PORTALS.world2.wins: the same track
- * and gates, stage for stage, renamed and repainted in a new order (it opens in Candy
- * Land), and every metre, trophy, smash and first-visit prize on it pays `wins` times
- * as much. Its gates need the same Health as World 1's - a harder World 2 would pay
- * less than World 1 right after each rebirth - so going over is always worth it, and
- * coming back (the same portal) costs nothing.
+ * World 2, through the portal once you've escaped World 1: the game's second half. The
+ * same course, under its own names, but its pits carry on from World 1's (see
+ * gen-stages.py): its first ones are as deep as World 1's last few - you fill them on
+ * your first run there - and from there on they're deeper than anything in World 1.
+ * Every Wins pad and first-visit prize on it pays `wins` times its pit's Wins, so it
+ * always pays better than World 1. Coming back (the same portal) costs nothing.
  */
 export const WORLDS = [
   { id: 'world1', name: 'World 1', wins: 1 },
-  { id: 'world2', name: 'World 2', wins: 3 },
+  { id: 'world2', name: 'World 2', wins: 2 },
 ]
 
-/** World 2's stages: [id, name, theme], one for each of World 1's. */
+/**
+ * World 2's pits, stage by stage: [level, wins, discover] before the world's `wins`.
+ * Generated by scripts/gen-stages.py.
+ */
+const WORLD2_TABLE = [
+  [0, 0, 0],
+  [149, 1.7e7, 2.6e6],
+  [155, 2.5e7, 3.8e6],
+  [161, 3.7e7, 5.6e6],
+  [167, 5.6e7, 8.4e6],
+  [174, 8.3e7, 1.2e7],
+  [180, 1.2e8, 1.8e7],
+  [187, 1.9e8, 2.8e7],
+  [194, 2.8e8, 4.2e7],
+  [201, 4.2e8, 6.3e7],
+  [208, 6.4e8, 9.6e7],
+  [216, 9.6e8, 1.4e8],
+  [223, 1.5e9, 2.2e8],
+  [231, 2.2e9, 3.3e8],
+  [239, 3.3e9, 5e8],
+  [247, 5.1e9, 7.6e8],
+  [255, 7.7e9, 1.2e9],
+  [263, 1.2e10, 1.8e9],
+  [271, 1.8e10, 2.7e9],
+  [279, 2.8e10, 4.2e9],
+  [288, 4.2e10, 6.3e9],
+  [297, 6.5e10, 9.8e9],
+  [305, 1e11, 1.5e10],
+  [314, 1.5e11, 2.2e10],
+  [323, 2.4e11, 3.6e10],
+  [332, 3.6e11, 5.4e10],
+  [341, 5.6e11, 8.4e10],
+  [350, 8.6e11, 1.3e11],
+  [359, 1.3e12, 2e11],
+  [368, 2e12, 3e11],
+  [377, 3.1e12, 4.6e11],
+  [387, 4.8e12, 7.2e11],
+  [396, 7.4e12, 1.1e12],
+  [405, 1.1e13, 1.6e12],
+  [415, 1.8e13, 2.7e12],
+  [424, 2.7e13, 4e12],
+  [433, 4.1e13, 6.2e12],
+  [443, 6.4e13, 9.6e12],
+  [452, 9.8e13, 1.5e13],
+  [462, 1.5e14, 2.2e13],
+  [471, 2.3e14, 3.4e13],
+  [481, 3.6e14, 5.4e13],
+  [490, 5.5e14, 8.2e13],
+  [500, 8.4e14, 1.3e14],
+  [509, 1.3e15, 2e14],
+  [519, 2e15, 3e14],
+  [528, 3.1e15, 4.6e14],
+  [538, 4.7e15, 7e14],
+  [548, 7.2e15, 1.1e15],
+  [557, 1.1e16, 1.6e15],
+  [567, 1.7e16, 2.6e15],
+  [576, 2.6e16, 3.9e15],
+  [586, 4e16, 6e15],
+  [596, 6.2e16, 9.3e15],
+  [605, 9.5e16, 1.4e16],
+  [615, 1.5e17, 2.2e16],
+  [624, 2.3e17, 3.4e16],
+  [634, 3.5e17, 5.2e16],
+  [644, 5.3e17, 8e16],
+  [653, 8.2e17, 1.2e17],
+]
+
+/** World 2's stages: [id, name], one for each of World 1's. */
 const WORLD2_STAGES = [
-  ['w2-lollipop', 'Lollipop Lane', 'candy'],
-  ['w2-rainbow-bridge', 'Rainbow Bridge', 'rainbow'],
-  ['w2-balloon', 'Balloon Skies', 'sky'],
-  ['w2-gem-garden', 'Gem Garden', 'crystal'],
-  ['w2-pixel', 'Pixel Park', 'neon'],
-  ['w2-blossom', 'Blossom Bay', 'cherry'],
-  ['w2-toadstool', 'Toadstool Town', 'mushroom'],
-  ['w2-bubble', 'Bubble Lagoon', 'ocean'],
-  ['w2-polar', 'Polar Lights', 'aurora'],
-  ['w2-moonbounce', 'Moonbounce', 'moon'],
-  ['w2-dragon-den', "Dragon's Den", 'volcano'],
-  ['w2-monkey', 'Monkey Jungle', 'jungle'],
-  ['w2-froggy', 'Froggy Pond', 'swamp'],
-  ['w2-penguin', 'Penguin Slopes', 'frozen'],
-  ['w2-pirate', 'Pirate Cove', 'beach'],
-  ['w2-pharaoh', 'Pharaoh Dunes', 'desert'],
-  ['w2-acorn', 'Acorn Woods', 'autumn'],
-  ['w2-bunny', 'Bunny Hills', 'grassy'],
-  ['w2-rocket', 'Rocket Run', 'space'],
-  ['w2-star-factory', 'Star Factory', 'cosmic'],
-  ['w2-gumdrop', 'Gumdrop Hills', 'candy'],
-  ['w2-unicorn-meadow', 'Unicorn Meadow', 'rainbow'],
-  ['w2-floating', 'Floating Isles', 'sky'],
-  ['w2-amethyst', 'Amethyst Hollow', 'crystal'],
-  ['w2-robot', 'Robot City', 'neon'],
-  ['w2-tea', 'Tea Garden', 'cherry'],
-  ['w2-fairy', 'Fairy Ring', 'mushroom'],
-  ['w2-shark', 'Shark Reef', 'ocean'],
-  ['w2-snow-owl', 'Snow Owl Peak', 'aurora'],
-  ['w2-crater', 'Crater Camp', 'moon'],
-  ['w2-fire-falls', 'Fire Falls', 'volcano'],
-  ['w2-tiger', 'Tiger Temple', 'jungle'],
-  ['w2-gator', 'Gator Bayou', 'swamp'],
-  ['w2-yeti', 'Yeti Cave', 'frozen'],
-  ['w2-treasure', 'Treasure Island', 'beach'],
-  ['w2-cactus', 'Cactus Canyon', 'desert'],
-  ['w2-maple', 'Maple Mill', 'autumn'],
-  ['w2-windmill', 'Windmill Farm', 'grassy'],
-  ['w2-asteroid', 'Asteroid Belt', 'space'],
-  ['w2-supernova', 'Supernova', 'cosmic'],
-  ['w2-chocolate', 'Chocolate River', 'candy'],
-  ['w2-prism', 'Prism Palace', 'rainbow'],
-  ['w2-thunder', 'Thunder Clouds', 'sky'],
-  ['w2-diamond-depths', 'Diamond Depths', 'crystal'],
-  ['w2-hologram', 'Hologram Highway', 'neon'],
-  ['w2-dragon-garden', 'Dragon Garden', 'cherry'],
-  ['w2-glow-forest', 'Glow Forest', 'mushroom'],
-  ['w2-kraken', 'Kraken Deep', 'ocean'],
-  ['w2-frost-crown', 'Frost Crown', 'aurora'],
-  ['w2-saturn', 'Saturn Rings', 'moon'],
-  ['w2-magma-throne', 'Magma Throne', 'volcano'],
-  ['w2-dino', 'Dino Valley', 'jungle'],
-  ['w2-lotus', 'Lotus Marsh', 'swamp'],
-  ['w2-ice-palace', 'Ice Palace', 'frozen'],
-  ['w2-mermaid', 'Mermaid Shores', 'beach'],
-  ['w2-sphinx-sands', 'Sphinx Sands', 'desert'],
-  ['w2-golden-grove', 'Golden Grove', 'autumn'],
-  ['w2-clover', 'Clover Kingdom', 'grassy'],
-  ['w2-black-hole', 'Black Hole', 'space'],
-  ['w2-multiverse', 'The Multiverse', 'cosmic'],
+  ['w2-lollipop', 'Lollipop Lane'],
+  ['w2-rainbow-bridge', 'Rainbow Bridge'],
+  ['w2-balloon', 'Balloon Skies'],
+  ['w2-gem-garden', 'Gem Garden'],
+  ['w2-pixel', 'Pixel Park'],
+  ['w2-blossom', 'Blossom Bay'],
+  ['w2-toadstool', 'Toadstool Town'],
+  ['w2-bubble', 'Bubble Lagoon'],
+  ['w2-polar', 'Polar Lights'],
+  ['w2-moonbounce', 'Moonbounce'],
+  ['w2-dragon-den', "Dragon's Den"],
+  ['w2-monkey', 'Monkey Jungle'],
+  ['w2-froggy', 'Froggy Pond'],
+  ['w2-penguin', 'Penguin Slopes'],
+  ['w2-pirate', 'Pirate Cove'],
+  ['w2-pharaoh', 'Pharaoh Dunes'],
+  ['w2-acorn', 'Acorn Woods'],
+  ['w2-bunny', 'Bunny Hills'],
+  ['w2-rocket', 'Rocket Run'],
+  ['w2-star-factory', 'Star Factory'],
+  ['w2-gumdrop', 'Gumdrop Hills'],
+  ['w2-unicorn-meadow', 'Unicorn Meadow'],
+  ['w2-floating', 'Floating Isles'],
+  ['w2-amethyst', 'Amethyst Hollow'],
+  ['w2-robot', 'Robot City'],
+  ['w2-tea', 'Tea Garden'],
+  ['w2-fairy', 'Fairy Ring'],
+  ['w2-shark', 'Shark Reef'],
+  ['w2-snow-owl', 'Snow Owl Peak'],
+  ['w2-crater', 'Crater Camp'],
+  ['w2-fire-falls', 'Fire Falls'],
+  ['w2-tiger', 'Tiger Temple'],
+  ['w2-gator', 'Gator Bayou'],
+  ['w2-yeti', 'Yeti Cave'],
+  ['w2-treasure', 'Treasure Island'],
+  ['w2-cactus', 'Cactus Canyon'],
+  ['w2-maple', 'Maple Mill'],
+  ['w2-windmill', 'Windmill Farm'],
+  ['w2-asteroid', 'Asteroid Belt'],
+  ['w2-supernova', 'Supernova'],
+  ['w2-chocolate', 'Chocolate River'],
+  ['w2-prism', 'Prism Palace'],
+  ['w2-thunder', 'Thunder Clouds'],
+  ['w2-diamond-depths', 'Diamond Depths'],
+  ['w2-hologram', 'Hologram Highway'],
+  ['w2-dragon-garden', 'Dragon Garden'],
+  ['w2-glow-forest', 'Glow Forest'],
+  ['w2-kraken', 'Kraken Deep'],
+  ['w2-frost-crown', 'Frost Crown'],
+  ['w2-saturn', 'Saturn Rings'],
+  ['w2-magma-throne', 'Magma Throne'],
+  ['w2-dino', 'Dino Valley'],
+  ['w2-lotus', 'Lotus Marsh'],
+  ['w2-ice-palace', 'Ice Palace'],
+  ['w2-mermaid', 'Mermaid Shores'],
+  ['w2-sphinx-sands', 'Sphinx Sands'],
+  ['w2-golden-grove', 'Golden Grove'],
+  ['w2-clover', 'Clover Kingdom'],
+  ['w2-black-hole', 'Black Hole'],
+  ['w2-multiverse', 'The Multiverse'],
 ]
+const WORLD2 = WORLD2_TABLE.map(([level, wins, discover], i) => {
+  const [id, name] = WORLD2_STAGES[i]
+  const mult = WORLDS[1].wins
+  return withWater({ id, name, level, wins: wins * mult, discover: discover * mult }, i)
+})
 
-const worldZones = (world) =>
-  ZONES.map((zone, i) => {
-    const mult = WORLDS[world].wins
-    const [id, name, theme] = world === 1 ? WORLD2_STAGES[i] : [zone.id, zone.name, zone.theme]
-    return {
-      ...zone,
-      id,
-      name,
-      theme,
-      winsPerMeter: zone.winsPerMeter * mult,
-      smash: zone.smash * mult,
-      discover: zone.discover * mult,
-    }
-  })
-
-/** Each world's stages, as ZONES: `WORLD_ZONES[profile.world]`. */
-export const WORLD_ZONES = [ZONES, worldZones(1)]
-export const zonesOf = (world) => WORLD_ZONES[world] ?? ZONES
+/** Each world's stages, as STAGES: `WORLD_STAGES[profile.world]`. */
+export const WORLD_STAGES = [STAGES, WORLD2]
+export const stagesOf = (world) => WORLD_STAGES[world] ?? STAGES
 
 // --- Shop -------------------------------------------------------------------------
 
 /**
- * The shop. Wins are the game's only currency: everything here, like tires and eggs,
+ * The shop. Wins are the game's only currency: everything here, like buckets and eggs,
  * is bought with them. `pass` = permanent unlock; `consumable` = grants every time.
  */
 export const SHOP = {
-  healthX2: { name: 'x2 Health', price: 400, kind: 'pass' },
-  winsX2: { name: 'x2 Wins', price: 2500, kind: 'pass' },
-  autoRoll: { name: 'Auto Roll', price: 150, kind: 'pass' },
-  padVeryOp: { name: 'VERY OP! Pad', price: 150000, kind: 'pass' },
-  padBest: { name: 'BEST OVERALL! Pad', price: 2500000, kind: 'pass' },
-  sphinx: { name: 'Sphinx', price: 2500000, kind: 'consumable', grant: { pet: 'sphinx' }, stock: 1000 },
+  waterX2: { name: 'x2 Water', price: 80, kind: 'pass' },
+  winsX2: { name: 'x2 Wins', price: 500, kind: 'pass' },
+  autoWin: { name: 'Auto Win', price: 30, kind: 'pass' },
+  wellVeryOp: { name: 'VERY OP! Well', price: 30000, kind: 'pass' },
+  wellBest: { name: 'BEST OVERALL! Well', price: 500000, kind: 'pass' },
+  sphinx: { name: 'Sphinx', price: 500000, kind: 'consumable', grant: { pet: 'sphinx' }, stock: 1000 },
 }
+
+/**
+ * Cosmetics, bought with Wins in the Store: looks only, no power - something to spend a
+ * late game's Wins on and show off. The colour of the Water you pour (`color`, or
+ * 'rainbow'), and a trail of sparkles behind you as you move (`palette`: the particle
+ * colours, Particles.jsx; trails need a graphics level with particles). The first of
+ * each is everyone's from the start.
+ */
+export const STREAMS = {
+  water: { name: 'Clear Water', color: '#33bfff', price: 0 },
+  mint: { name: 'Mint Splash', color: '#5dffb0', price: 5000 },
+  pink: { name: 'Bubblegum Pour', color: '#ff7ad6', price: 2e6 },
+  gold: { name: 'Liquid Gold', color: '#ffc824', price: 1e9 },
+  lava: { name: 'Lava Flow', color: '#ff6a1e', price: 1e12 },
+  galaxy: { name: 'Galaxy Pour', color: '#a56bff', price: 1e15 },
+  rainbow: { name: 'Rainbow Pour', color: 'rainbow', price: 1e18 },
+}
+export const TRAILS = {
+  none: { name: 'No Trail', palette: null, price: 0 },
+  bubbles: { name: 'Bubbles', palette: 'water', price: 20000 },
+  sparkle: { name: 'Gold Sparkle', palette: 'gold', price: 5e7 },
+  confetti: { name: 'Party Confetti', palette: 'confetti', price: 5e10 },
+  stardust: { name: 'Stardust', palette: 'galaxy', price: 5e13 },
+  fire: { name: 'Fire Trail', palette: 'lava', price: 5e16 },
+}
+export const COSMETICS = { stream: STREAMS, trail: TRAILS }
 
 /**
  * Boxity Gems products, by sku. Prices live in Boxity's catalog, never here: the game
  * only names the sku and, once Boxity confirms the sale, grants what it says. Wins
- * packs grow with you: `winsRolls` max-level rolls' worth of Wins.
+ * packs grow with you: `winsRuns` max-level runs' worth of Wins.
  */
 export const GEM_PRODUCTS = {
-  wins_small: { name: 'Pile of Wins', blurb: '10 max-level rolls of Wins', icon: 'trophy', grant: { winsRolls: 10 } },
-  wins_big: { name: 'Mountain of Wins', blurb: '60 max-level rolls of Wins', icon: 'trophy', grant: { winsRolls: 60 } },
-  potion_bundle: { name: 'Potion Bundle', blurb: '3 x2 Health + 3 x2 Wins potions', icon: 'potionHealth', grant: { items: { potionHealth: 3, potionWins: 3 } } },
+  wins_small: { name: 'Pile of Wins', blurb: '10 max-level runs of Wins', icon: 'trophy', grant: { winsRuns: 10 } },
+  wins_big: { name: 'Mountain of Wins', blurb: '60 max-level runs of Wins', icon: 'trophy', grant: { winsRuns: 60 } },
+  potion_bundle: { name: 'Potion Bundle', blurb: '3 x2 Water + 3 x2 Wins potions', icon: 'potionWater', grant: { items: { potionWater: 3, potionWins: 3 } } },
   volcano_eggs: { name: '3 Volcano Eggs', blurb: 'The best pets in the game', icon: 'egg:volcano', grant: { items: { eggVolcano: 3 } } },
-  auto_roll: { name: 'Auto Roll', blurb: 'Rolls for you on the Roll Zone', icon: 'tire', grant: { pass: 'autoRoll' } },
-  health_x2: { name: 'x2 Health', blurb: 'Double every Health gain, forever', icon: 'heart', grant: { pass: 'healthX2' } },
-  wins_x2: { name: 'x2 Wins', blurb: 'Double every roll’s Wins, forever', icon: 'trophy', grant: { pass: 'winsX2' } },
-  pad_best: { name: 'Galaxy Pad', blurb: 'Unlocks the x100 Galaxy Pad', icon: 'portal', grant: { pass: 'padBest' } },
+  auto_win: { name: 'Auto Win', blurb: 'Claims your best ledge’s Wins at the start line', icon: 'bucket', grant: { pass: 'autoWin' } },
+  water_x2: { name: 'x2 Water', blurb: 'Double every Water gain, forever', icon: 'drop', grant: { pass: 'waterX2' } },
+  wins_x2: { name: 'x2 Wins', blurb: 'Double every Wins pad, forever', icon: 'trophy', grant: { pass: 'winsX2' } },
+  well_best: { name: 'Galaxy Well', blurb: 'Unlocks the x100 Galaxy Well', icon: 'portal', grant: { pass: 'wellBest' } },
 }
 
 /**
@@ -494,7 +739,7 @@ export const GEM_PRODUCTS = {
  * and hyphens. `cooldownMs` keeps a player from chaining them.
  */
 export const AD_REWARDS = {
-  'health-potion': { label: 'x2 Health Potion', icon: 'potionHealth', grant: { item: 'potionHealth' }, cooldownMs: 3 * 60 * 1000 },
+  'water-potion': { label: 'x2 Water Potion', icon: 'potionWater', grant: { item: 'potionWater' }, cooldownMs: 3 * 60 * 1000 },
   'wins-potion': { label: 'x2 Wins Potion', icon: 'potionWins', grant: { item: 'potionWins' }, cooldownMs: 3 * 60 * 1000 },
 }
 
@@ -502,36 +747,36 @@ export const AD_REWARDS = {
 export const SPHINX_STOCK_DEFAULT = 954
 
 /**
- * The three Health packs under the level bar. They grow with you: each gives `share`
- * of the Health your next level needs, for `rolls` rolls' worth of Wins at that Health.
- * Packs aren't held back by the level cap.
+ * The three Water packs under the level bar. They grow with you: each gives `share`
+ * of the Water your next level needs, for `runs` runs' worth of Wins at that Water.
+ * Packs fill you up to your max level, no further: past it, only a rebirth takes you on.
  */
-export const HEALTH_PACKS = [
-  { share: 1, rolls: 1 },
-  { share: 5, rolls: 4 },
-  { share: 20, rolls: 12 },
+export const WATER_PACKS = [
+  { share: 1, runs: 1 },
+  { share: 5, runs: 4 },
+  { share: 20, runs: 12 },
 ]
 
 // --- Tutorial & badges ------------------------------------------------------------
 
 /**
- * The guide for new players, as in the reference: train, roll, spend the Wins on a
- * tire, roll further, rebirth. Each step completes when its event fires (and, with
- * `health`, once you have that much); after the last the guide is done.
+ * The guide for new players: get Water (tapping, or at a well), run out and fill a pit or two, claim
+ * the Wins pad, spend the Wins on a bucket. Each step completes when its event fires
+ * (and, with `water`, once you have that much); after the last the guide is done.
  */
 export const TUTORIAL = [
-  { text: 'Hop on a training pad to gain Health', event: 'train', target: 'pad0', health: 30 },
-  { text: 'Roll your tire to earn Wins', event: 'roll', target: 'roll' },
-  { text: 'Buy a new tire with your Wins!', event: 'buyTire', target: 'tires' },
+  { text: 'Stand in the well and tap to scoop Water', event: 'train', target: 'well0', water: 140 },
+  { text: 'Fill the pits, then grab the Wins pad!', event: 'claim', target: 'course' },
+  { text: 'Buy a new bucket with your Wins!', event: 'buyBucket', target: 'buckets' },
 ]
 
 export const BADGES = {
-  firstRoll: { name: 'First Roll' },
+  firstWin: { name: 'First Escape' },
   firstRebirth: { name: 'First Rebirth' },
   firstPet: { name: 'Pet Owner' },
-  firstWall: { name: 'Wall Smasher' },
-  kilometer: { name: 'Kilometre Club' },
-  space: { name: 'Space Roller' },
-  cosmic: { name: 'Cosmic Champion' },
+  firstSkip: { name: 'Shortcut Taker' },
+  stage10: { name: 'Pit Filler' },
+  space: { name: 'Space Swimmer' },
+  cosmic: { name: 'Great Escape' },
   world2: { name: 'World Traveller' },
 }

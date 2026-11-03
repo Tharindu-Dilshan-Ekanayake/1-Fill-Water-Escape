@@ -38,7 +38,7 @@ function KeyButton({ letter, label, gradient, onClick, active, disabled }) {
  */
 export function EggPanel() {
   const eggId = useGame((s) => s.zone.egg)
-  const hidden = useGame((s) => Boolean(s.panel || s.roll || s.rollResult || s.hatch))
+  const hidden = useGame((s) => Boolean(s.panel || s.hatch))
   const wins = useGame((s) => s.profile.wins)
   const autoHatch = useGame((s) => s.autoHatch)
   const setAutoHatch = useGame((s) => s.setAutoHatch)
